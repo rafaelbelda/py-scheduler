@@ -108,7 +108,7 @@ def _start_api(scheduler: Scheduler) -> None:
 
     try:
         uvicorn_level = (config.get("api.logging_level") or "info").lower()
-        uvicorn.run(app, host=host, port=port, log_level=uvicorn_level)
+        uvicorn.run(app, host=host, port=port, log_level=uvicorn_level, timeout_graceful_shutdown=5)
     except KeyboardInterrupt:
         logger.info("keyboard interrupt received — shutting down")
     finally:
