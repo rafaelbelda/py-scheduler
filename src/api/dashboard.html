@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>py-scheduler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0a0b;
+    --bg2:       #111113;
+    --bg3:       #18181c;
+    --border:    #222228;
+    --border2:   #2e2e38;
+    --text:      #e8e8f0;
+    --muted:     #6b6b80;
+    --muted2:    #44444f;
+    --accent:    #ff676f;
+    --accent2:   #e04a52;
+    --green:     #2ecc71;
+    --red:       #e74c3c;
+    --orange:    #f39c12;
+    --yellow:    #f1c40f;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Syne', sans-serif;
+    --radius:    10px;
+    --radius-sm: 6px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Auth Screen ── */
+  #auth-screen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+    flex-direction: column;
+    gap: 32px;
+  }
+  .auth-logo { font-family: var(--sans); font-size: 28px; font-weight: 800; letter-spacing: -1px; color: var(--text); }
+  .auth-logo span { color: var(--accent); }
+  .auth-card {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 14px;
+    padding: 32px;
+    width: 340px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .auth-label { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+  .auth-input {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--mono); font-size: 13px; padding: 10px 14px;
+    outline: none; transition: border-color .2s;
+  }
+  .auth-input:focus { border-color: var(--accent); }
+  .auth-btn {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: var(--radius-sm); padding: 11px;
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .2s, transform .1s;
+  }
+  .auth-btn:hover { background: var(--accent2); }
+  .auth-btn:active { transform: scale(.98); }
+  .auth-error { color: var(--red); font-size: 12px; text-align: center; min-height: 16px; }
+
+  /* ── Layout ── */
+  #app { display: none; flex-direction: column; min-height: 100vh; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px; height: 56px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-family: var(--sans); font-size: 18px; font-weight: 800; letter-spacing: -.5px; }
+  .logo span { color: var(--accent); }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 12px; font-size: 11px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted2); }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .uptime-badge { font-size: 11px; color: var(--muted); }
+
+  nav {
+    display: flex; gap: 2px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .nav-tab {
+    padding: 12px 18px; font-size: 12px; font-weight: 500;
+    color: var(--muted); background: none; border: none;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .2s, border-color .2s;
+    font-family: var(--mono); letter-spacing: .04em;
+  }
+  .nav-tab:hover { color: var(--text); }
+  .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content { display: none; padding: 28px; }
+  .tab-content.active { display: block; }
+
+  /* ── Stats strip ── */
+  .stats-strip {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px;
+  }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 8px; }
+  .stat-val { font-family: var(--sans); font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-val.green { color: var(--green); }
+  .stat-val.red   { color: var(--red); }
+  .stat-val.muted { color: var(--muted); }
+
+  /* ── Alerts banner ── */
+  #alerts-banner { margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px; }
+  .alert {
+    display: flex; align-items: flex-start; gap: 12px;
+    background: color-mix(in srgb, var(--red) 8%, var(--bg2));
+    border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
+    border-radius: var(--radius); padding: 12px 16px;
+    animation: slideIn .25s ease;
+  }
+  .alert.warn {
+    background: color-mix(in srgb, var(--orange) 8%, var(--bg2));
+    border-color: color-mix(in srgb, var(--orange) 25%, transparent);
+  }
+  .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .alert-body { flex: 1; }
+  .alert-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; color: var(--red); }
+  .alert.warn .alert-title { color: var(--orange); }
+  .alert-msg { font-size: 11px; color: var(--muted); }
+  .alert-dismiss { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+  /* ── Tasks table ── */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+  }
+  .section-title { font-family: var(--sans); font-size: 15px; font-weight: 700; }
+
+  .table-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; padding: 10px 16px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+    border-bottom: 1px solid var(--border); background: var(--bg3); font-weight: 500;
+  }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(124,106,255,.04); }
+
+  .task-name { font-weight: 500; font-size: 13px; }
+  .task-key  { font-size: 11px; color: var(--muted); }
+  .freq-badge {
+    display: inline-flex; align-items: center;
+    background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: 4px; padding: 2px 8px; font-size: 10px; color: var(--muted);
+    white-space: nowrap;
+  }
+  .error-rate { font-size: 12px; }
+  .error-rate.ok   { color: var(--green); }
+  .error-rate.warn { color: var(--orange); }
+  .error-rate.bad  { color: var(--red); }
+
+  /* Apple-style toggle */
+  .toggle { position: relative; display: inline-block; width: 40px; height: 24px; }
+  .toggle input { display: none; }
+  .toggle-track {
+    position: absolute; inset: 0; background: var(--muted2);
+    border-radius: 12px; cursor: pointer; transition: background .25s;
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); }
+  .toggle-thumb {
+    position: absolute; top: 3px; left: 3px;
+    width: 18px; height: 18px; background: #fff;
+    border-radius: 50%; transition: transform .25s; pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+
+  .action-btn {
+    background: var(--bg3); border: 1px solid var(--border2);
+    color: var(--text); border-radius: var(--radius-sm);
+    padding: 5px 10px; font-size: 11px; font-family: var(--mono);
+    cursor: pointer; transition: background .15s, border-color .15s;
+    white-space: nowrap;
+  }
+  .action-btn:hover { background: var(--border2); border-color: var(--accent); }
+  .action-btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .action-btn.run-btn:hover { border-color: var(--green); color: var(--green); }
+
+  .btn-row { display: flex; gap: 6px; align-items: center; }
+
+  /* ── Logs ── */
+  .logs-toolbar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .log-input {
+    background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 8px 12px;
+    outline: none; transition: border-color .2s;
+  }
+  .log-input:focus { border-color: var(--accent); }
+  .log-input.wide { flex: 1; min-width: 180px; }
+  select.log-input { cursor: pointer; }
+
+  .filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-chip {
+    padding: 5px 12px; border-radius: 20px; font-size: 11px;
+    border: 1px solid var(--border2); background: var(--bg3);
+    color: var(--muted); cursor: pointer; transition: all .15s;
+  }
+  .filter-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .filter-chip.success.active { background: var(--green); border-color: var(--green); }
+  .filter-chip.failure.active { background: var(--red); border-color: var(--red); }
+  .filter-chip.timeout.active { background: var(--orange); border-color: var(--orange); }
+
+  .log-table-wrap {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; max-height: 62vh; overflow-y: auto;
+    display: grid;
+    grid-template-columns: 155px max-content 90px 70px 1fr;
+    align-content: start;
+  }
+  .log-entry { display: contents; }
+  .log-entry > .log-cell { border-bottom: 1px solid var(--border); transition: background .12s; }
+  .log-entry:hover > .log-cell { background: rgba(255,103,111,.04); }
+  .log-cell {
+    padding: 8px 14px; font-size: 11px; display: flex; align-items: center; min-width: 0;
+  }
+  .log-cell.ts     { color: var(--muted); white-space: nowrap; }
+  .log-cell.task   { color: var(--text); font-weight: 500; white-space: nowrap; }
+  .log-cell.detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .log-header { display: contents; }
+  .log-header > .log-cell { background: var(--bg3); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; cursor: default; }
+
+  .status-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+    letter-spacing: .04em; white-space: nowrap;
+  }
+  .tag-success { background: rgba(46,204,113,.15); color: var(--green); }
+  .tag-failure { background: rgba(231,76,60,.15);  color: var(--red); }
+  .tag-timeout { background: rgba(243,156,18,.15); color: var(--orange); }
+  .tag-skipped { background: rgba(107,107,128,.15); color: var(--muted); }
+
+  .dur { color: var(--muted); font-size: 11px; }
+
+  /* ── Log expand ── */
+  .log-row-detail {
+    display: none; background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    grid-column: 1 / -1;
+  }
+  .log-row-detail pre {
+    font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all;
+    max-height: 200px; overflow-y: auto;
+  }
+  .log-entry.expanded + .log-row-detail { display: block; }
+  .log-entry { cursor: pointer; }
+
+  /* ── Task status strip ── */
+  .task-status-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    display: inline-block; margin-right: 7px;
+  }
+  .task-status-dot.success { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .task-status-dot.failure { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+  .task-status-dot.timeout { background: var(--orange);box-shadow: 0 0 6px var(--orange); }
+  .task-status-dot.never   { background: var(--muted2); }
+  .task-status-dot.disabled{ background: var(--muted2); opacity: .4; }
+
+  /* ── Empty / loading ── */
+  .empty {
+    padding: 48px; text-align: center; color: var(--muted); font-size: 12px;
+  }
+  .spinner {
+    width: 20px; height: 20px; border: 2px solid var(--border2);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .7s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Modal ── */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    display: none; align-items: center; justify-content: center; z-index: 500;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: 14px; padding: 28px; width: 520px; max-width: 95vw;
+    max-height: 85vh; overflow-y: auto;
+    animation: fadeUp .2s ease;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+  .modal-title { font-family: var(--sans); font-size: 17px; font-weight: 700; margin-bottom: 20px; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+
+  .form-row { margin-bottom: 14px; }
+  .form-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 5px; display: block; }
+  .form-input {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 9px 12px; outline: none;
+    transition: border-color .2s;
+  }
+  .form-input:focus { border-color: var(--accent); }
+  .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .btn-primary {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: var(--radius-sm); padding: 9px 20px;
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .2s;
+  }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-cancel {
+    background: var(--bg3); border: 1px solid var(--border2);
+    color: var(--muted); border-radius: var(--radius-sm); padding: 9px 20px;
+    font-family: var(--mono); font-size: 12px; cursor: pointer;
+  }
+
+  /* ── Run output modal ── */
+  .run-output {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 14px;
+    font-size: 11px; max-height: 300px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-all;
+    margin-top: 12px; color: var(--muted);
+  }
+  .run-status { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .run-status.ok  { color: var(--green); }
+  .run-status.err { color: var(--red); }
+
+  /* ── Strikes panel ── */
+  .strike-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .strike-row:last-child { border-bottom: none; }
+  .strike-bar-wrap { flex: 1; margin: 0 16px; background: var(--bg3); border-radius: 4px; height: 5px; overflow: hidden; }
+  .strike-bar { height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+  .strike-bar.warn  { background: var(--orange); }
+  .strike-bar.muted { background: var(--red); }
+
+  /* ── Responsive ── */
+  @media (max-width: 860px) {
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .log-table-wrap { grid-template-columns: 130px max-content 1fr; }
+    .log-cell:nth-child(4), .log-cell:nth-child(5) { display: none; }
+    th:nth-child(4), td:nth-child(4) { display: none; }
+  }
+
+  /* ── Toast ── */
+  #toast-container {
+    position: fixed; bottom: 24px; right: 24px; z-index: 600;
+    display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  }
+  .toast {
+    background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: var(--radius); padding: 10px 16px;
+    font-size: 12px; color: var(--text);
+    animation: toastIn .25s ease;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.4);
+    max-width: 300px;
+  }
+  .toast.ok   { border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+  .toast.err  { border-color: color-mix(in srgb, var(--red)   40%, transparent); }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
+  /* misc */
+  .flex-gap { display: flex; gap: 10px; align-items: center; }
+  .tag-muted { background: rgba(107,107,128,.15); color: var(--muted); display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+  .forced-tag { display: inline; font-size: 10px; font-weight: 600; color: var(--accent); background: rgba(255,103,111,.12); border: 1px solid rgba(255,103,111,.3); border-radius: 4px; padding: 1px 5px; margin-left: 5px; vertical-align: text-bottom; letter-spacing: .03em; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- Auth -->
+<div id="auth-screen">
+  <div class="auth-logo">py<span>-</span>scheduler</div>
+  <div class="auth-card">
+    <div>
+      <div class="auth-label">API Token</div>
+      <input id="token-input" class="auth-input" type="password" placeholder="Enter your token..." autocomplete="off">
+    </div>
+    <button class="auth-btn" onclick="doAuth()">Connect</button>
+    <div id="auth-error" class="auth-error"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <header>
+    <div class="logo">py<span>-</span>scheduler</div>
+    <div class="header-right">
+      <div class="status-pill">
+        <div class="dot" id="sched-dot"></div>
+        <span id="sched-label">connecting</span>
+      </div>
+      <span class="uptime-badge" id="uptime-badge"></span>
+      <button class="action-btn" onclick="logout()">logout</button>
+    </div>
+  </header>
+
+  <nav>
+    <button class="nav-tab active" onclick="showTab('overview', this)">Overview</button>
+    <button class="nav-tab" onclick="showTab('tasks', this)">Tasks</button>
+    <button class="nav-tab" onclick="showTab('logs', this)">Logs</button>
+    <button class="nav-tab" onclick="showTab('strikes', this)">Strikes</button>
+  </nav>
+
+  <!-- OVERVIEW -->
+  <div id="tab-overview" class="tab-content active">
+    <div class="stats-strip" id="stats-strip">
+      <div class="stat-card"><div class="stat-label">Total Tasks</div><div class="stat-val muted" id="s-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Enabled</div><div class="stat-val green" id="s-enabled">—</div></div>
+      <div class="stat-card"><div class="stat-label">Errors (7d)</div><div class="stat-val red" id="s-errors">—</div></div>
+      <div class="stat-card"><div class="stat-label">Runs (7d)</div><div class="stat-val muted" id="s-runs">—</div></div>
+    </div>
+    <div id="alerts-banner"></div>
+
+    <!-- Task status strip -->
+    <div class="section-header">
+      <div class="section-title">Task Status</div>
+      <button class="action-btn" onclick="loadOverview()">↻ refresh</button>
+    </div>
+    <div id="task-status-wrap" class="table-wrap" style="margin-bottom:24px">
+      <table>
+        <thead><tr>
+          <th>Task</th><th>Last run</th><th>Status</th><th>Duration</th><th>Frequency</th>
+        </tr></thead>
+        <tbody id="task-status-tbody">
+          <tr><td colspan="5" class="empty"><div class="spinner"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recent issues -->
+    <div class="section-header" style="margin-top:4px">
+      <div class="section-title">Recent Issues <span id="issues-count" style="font-size:11px;color:var(--muted);font-family:var(--mono);font-weight:400"></span></div>
+    </div>
+    <div id="issues-wrap" class="log-table-wrap">
+      <div class="empty"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- TASKS -->
+  <div id="tab-tasks" class="tab-content">
+    <div class="section-header">
+      <div class="section-title">Task Definitions</div>
+      <div class="flex-gap">
+        <button class="action-btn" onclick="reloadTasks()">↻ reload config</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Task</th><th>Frequency</th><th>Error rate (7d)</th><th>Last run</th><th>Enabled</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="tasks-tbody"><tr><td colspan="6" class="empty"><div class="spinner"></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div id="tab-logs" class="tab-content">
+    <div class="logs-toolbar">
+      <input id="log-search" class="log-input wide" placeholder="search logs…" oninput="filterLogs()">
+      <input id="log-date-from" class="log-input" type="date" onchange="fetchLogs()">
+      <span style="color:var(--muted)">→</span>
+      <input id="log-date-to" class="log-input" type="date" onchange="fetchLogs()">
+      <select id="log-task-filter" class="log-input" onchange="fetchLogs()">
+        <option value="">all tasks</option>
+      </select>
+      <button class="action-btn" onclick="fetchLogs()">load</button>
+    </div>
+    <div class="filter-group" style="margin-bottom:14px" id="status-filters">
+      <button class="filter-chip active" data-status="all"    onclick="setStatusFilter(this)">all</button>
+      <button class="filter-chip success" data-status="success" onclick="setStatusFilter(this)">success</button>
+      <button class="filter-chip failure" data-status="failure" onclick="setStatusFilter(this)">failure</button>
+      <button class="filter-chip timeout" data-status="timeout" onclick="setStatusFilter(this)">timeout</button>
+    </div>
+    <div id="log-count" style="font-size:11px;color:var(--muted);margin-bottom:10px;"></div>
+    <div class="log-table-wrap" id="logs-container">
+      <div class="empty">Select a date range and click load</div>
+    </div>
+  </div>
+
+  <!-- STRIKES -->
+  <div id="tab-strikes" class="tab-content">
+    <div class="section-header">
+      <div class="section-title">Notification Strikes</div>
+      <button class="action-btn danger" onclick="resetAllStrikes()">reset all strikes</button>
+    </div>
+    <div class="table-wrap" style="padding:16px 20px" id="strikes-container">
+      <div class="empty"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-bg" id="edit-modal">
+  <div class="modal">
+    <div class="modal-title">Edit Task — <span id="edit-task-key"></span></div>
+    <div class="form-row">
+      <label class="form-label">Name</label>
+      <input class="form-input" id="ef-name">
+    </div>
+    <div class="form-row">
+      <label class="form-label">Script path</label>
+      <input class="form-input" id="ef-script">
+    </div>
+    <div class="form-row-2">
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">Frequency</label>
+        <select class="form-input" id="ef-frequency" onchange="updateEditForm()">
+          <option>daily</option><option>weekly</option><option>monthly</option>
+          <option>yearly</option><option>interval</option><option>specific</option><option>once</option>
+        </select>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">Timeout (s)</label>
+        <input class="form-input" id="ef-timeout" type="number" min="1">
+      </div>
+    </div>
+    <div class="form-row" id="ef-times-row">
+      <label class="form-label">Times (HH:MM, comma-separated)</label>
+      <input class="form-input" id="ef-times">
+    </div>
+    <div class="form-row" id="ef-days-row" style="display:none">
+      <label class="form-label">Days of week (e.g. monday,friday)</label>
+      <input class="form-input" id="ef-days">
+    </div>
+    <div class="form-row" id="ef-dom-row" style="display:none">
+      <label class="form-label">Day of month (1-31)</label>
+      <input class="form-input" id="ef-dom" type="number" min="1" max="31">
+    </div>
+    <div class="form-row" id="ef-md-row" style="display:none">
+      <label class="form-label">Month-Day (MM-DD)</label>
+      <input class="form-input" id="ef-md" placeholder="01-15">
+    </div>
+    <div class="form-row" id="ef-sd-row" style="display:none">
+      <label class="form-label">Specific date (YYYY-MM-DD)</label>
+      <input class="form-input" id="ef-sd">
+    </div>
+    <div class="form-row-2" id="ef-interval-row" style="display:none">
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">Interval value</label>
+        <input class="form-input" id="ef-iv" type="number" min="1">
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">Interval unit</label>
+        <select class="form-input" id="ef-iu">
+          <option>minutes</option><option>hours</option><option>days</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row-2">
+      <div>
+        <label class="form-label">Notify on success</label>
+        <select class="form-input" id="ef-nos"><option value="false">No</option><option value="true">Yes</option></select>
+      </div>
+      <div>
+        <label class="form-label">Notify on failure</label>
+        <select class="form-input" id="ef-nof"><option value="true">Yes</option><option value="false">No</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('edit-modal')">cancel</button>
+      <button class="btn-primary" onclick="saveTaskEdit()">save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Run Modal -->
+<div class="modal-bg" id="run-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-title">Run — <span id="run-task-name"></span></div>
+    <div id="run-body"><div class="empty"><div class="spinner"></div></div></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('run-modal')">close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// =============================================================================
+// STATE — single source of truth, nothing mutates state outside this object
+// =============================================================================
+const state = {
+  token:         '',
+  logs:          [],
+  statusFilter:  'all',
+  stats:         {},
+  tasks:         {},
+  pollTimer:     null,
+};
+
+// =============================================================================
+// API LAYER — all fetch calls go through here
+// =============================================================================
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      Authorization:  `Bearer ${state.token}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
+    },
+  });
+
+  // Auto-logout on auth failure
+  if (res.status === 401 || res.status === 403) {
+    logout();
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text);
+  }
+
+  return res.json();
+}
+
+// =============================================================================
+// AUTH
+// =============================================================================
+async function doAuth() {
+  const t = document.getElementById('token-input').value.trim();
+  if (!t) return;
+  const errEl = document.getElementById('auth-error');
+  errEl.textContent = '';
+
+  try {
+    const res = await fetch('/status', { headers: { Authorization: `Bearer ${t}` } });
+    if (res.status === 401 || res.status === 403) { errEl.textContent = 'Invalid token'; return; }
+    if (!res.ok) { errEl.textContent = `Error ${res.status}`; return; }
+
+    state.token = t;
+    sessionStorage.setItem('pysched_token', t);
+    document.getElementById('auth-screen').style.display = 'none';
+    const app = document.getElementById('app');
+    app.style.display = 'flex';
+    app.style.flexDirection = 'column';
+    init();
+  } catch (e) {
+    errEl.textContent = 'Connection failed';
+  }
+}
+
+document.getElementById('token-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doAuth();
+});
+
+function logout() {
+  sessionStorage.removeItem('pysched_token');
+  state.token = '';
+  location.reload();
+}
+
+// =============================================================================
+// INIT & POLLING
+// =============================================================================
+async function init() {
+  const today  = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
+  document.getElementById('log-date-from').value = weekAgo;
+  document.getElementById('log-date-to').value   = today;
+
+  // Wire up search debounce here (not inline)
+  document.getElementById('log-search').addEventListener('input', debounce(filterLogs, 200));
+
+  await Promise.all([loadOverview(), loadTasks()]);
+  startPolling();
+
+  // Pause polling when tab is hidden, resume when visible
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopPolling();
+    else startPolling();
+  });
+}
+
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(pollStatus, 15000);
+}
+
+function stopPolling() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+// =============================================================================
+// TABS
+// =============================================================================
+function showTab(id, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+  if (id === 'logs')    fetchLogs();
+  if (id === 'strikes') loadStrikes();
+  if (id === 'tasks')   loadTasks();
+}
+
+// =============================================================================
+// STATUS POLLING
+// =============================================================================
+async function pollStatus() {
+  try {
+    const s = await api('/status');
+    if (!s) return;
+
+    const dot = document.getElementById('sched-dot');
+    const lbl = document.getElementById('sched-label');
+    dot.className = 'dot ' + (s.scheduler_running ? 'green' : '');
+    lbl.textContent = s.scheduler_running ? 'running' : 'stopped';
+
+    const h = Math.floor(s.uptime_seconds / 3600);
+    const m = Math.floor((s.uptime_seconds % 3600) / 60);
+    document.getElementById('uptime-badge').textContent = `up ${h}h ${m}m`;
+
+    if (s.strikes?.global_muted)
+      showAlert('error', 'Notifications globally muted',
+        'Global notification cap reached. Reset strikes to re-enable.', 'global-mute');
+  } catch {
+    document.getElementById('sched-dot').className = 'dot';
+    document.getElementById('sched-label').textContent = 'unreachable';
+  }
+}
+
+// =============================================================================
+// ALERTS
+// =============================================================================
+const _shownAlerts = new Set();
+
+function showAlert(type, title, msg, id = '') {
+  if (id && _shownAlerts.has(id)) return;
+  if (id) _shownAlerts.add(id);
+  const banner = document.getElementById('alerts-banner');
+  const el = document.createElement('div');
+  el.className = `alert${type === 'warn' ? ' warn' : ''}`;
+  el.innerHTML = `
+    <div class="alert-icon">${type === 'warn' ? '⚠️' : '🔴'}</div>
+    <div class="alert-body">
+      <div class="alert-title">${esc(title)}</div>
+      <div class="alert-msg">${esc(msg)}</div>
+    </div>
+    <button class="alert-dismiss">×</button>`;
+  el.querySelector('.alert-dismiss').addEventListener('click', () => el.remove());
+  banner.appendChild(el);
+}
+
+// =============================================================================
+// OVERVIEW
+// =============================================================================
+async function loadOverview() {
+  await pollStatus();
+  try {
+    const today     = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+    const [tasks, stats, todayLogs, yesterdayLogs, status] = await Promise.all([
+      api('/tasks'),
+      api('/logs/stats/summary?days=7'),
+      api(`/logs/${today}`),
+      api(`/logs/${yesterday}`),
+      api('/status'),
+    ]);
+
+    state.tasks = tasks?.tasks || {};
+    state.stats = stats || {};
+
+    // ── Stat strip ──────────────────────────────────────────────────────────
+    document.getElementById('s-total').textContent   = tasks?.count ?? '—';
+    document.getElementById('s-enabled').textContent =
+      Object.values(state.tasks).filter(t => t.enabled).length;
+
+    let totalErrors = 0, totalRuns = 0;
+    Object.values(stats?.tasks || {}).forEach(t => {
+      totalErrors += (t.failure || 0) + (t.timeout || 0);
+      totalRuns   += t.total || 0;
+    });
+    document.getElementById('s-errors').textContent = totalErrors;
+    document.getElementById('s-runs').textContent   = totalRuns;
+
+    // ── Build last-run map from yesterday + today ───────────────────────────
+    const allEntries = [
+      ...(yesterdayLogs?.entries || []),
+      ...(todayLogs?.entries    || []),
+    ];
+    const lastRunMap = {};
+    allEntries.forEach(e => { if (e.task_key) lastRunMap[e.task_key] = e; });
+
+    // ── Section 1: Task status strip (one row per task) ─────────────────────
+    const tbody = document.getElementById('task-status-tbody');
+    const taskEntries = Object.entries(state.tasks);
+    if (!taskEntries.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No tasks configured</td></tr>';
+    } else {
+      tbody.innerHTML = taskEntries.map(([key, task]) => {
+        const last    = lastRunMap[key];
+        const status  = last?.status || 'never';
+        const dotCls  = !task.enabled ? 'disabled' : (status === 'never' ? 'never' : status);
+        const tagCls  = { success:'tag-success', failure:'tag-failure', timeout:'tag-timeout' }[status] || '';
+        const dur     = last ? last.duration_s?.toFixed(2) + 's' : '—';
+        const ago     = last ? timeAgo(last.ts) : '—';
+        const forced  = last?.forced ? '<span class="forced-tag">forced</span>' : '';
+        const disabledNote = !task.enabled ? '<span class="tag-muted" style="margin-left:6px">disabled</span>' : '';
+        return `<tr>
+          <td>
+            <div style="display:flex;align-items:center">
+              <span class="task-status-dot ${dotCls}"></span>
+              <span class="task-name">${esc(task.name)}</span>${disabledNote}
+            </div>
+            <div class="task-key" style="padding-left:15px">${esc(key)}</div>
+          </td>
+          <td style="font-size:11px;color:var(--muted)">${ago}${forced}</td>
+          <td>${status === 'never' ? '<span style="color:var(--muted2);font-size:11px">no runs yet</span>' : `<span class="status-tag ${tagCls}">${esc(status)}</span>`}</td>
+          <td style="font-size:11px;color:var(--muted)">${dur}</td>
+          <td><span class="freq-badge">${esc(formatFreq(task))}</span></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ── Section 2: Recent issues (failures + timeouts, last 24h) ───────────
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    const issues = allEntries
+      .filter(e => (e.status === 'failure' || e.status === 'timeout')
+                && new Date(e.ts).getTime() >= cutoff)
+      .reverse();
+
+    const countEl = document.getElementById('issues-count');
+    const issuesWrap = document.getElementById('issues-wrap');
+
+    if (!issues.length) {
+      countEl.textContent = '';
+      issuesWrap.innerHTML = `<div class="empty" style="color:var(--green);opacity:.7">
+        ✓ no failures in the last 24h
+      </div>`;
+    } else {
+      countEl.textContent = `(${issues.length})`;
+      renderLogList(issues, issuesWrap, false);
+    }
+
+    // ── Mute alerts ─────────────────────────────────────────────────────────
+    Object.entries(status?.strikes?.tasks || {}).forEach(([k, v]) => {
+      if (v.muted)
+        showAlert('error', `Task '${k}' notifications muted`,
+          `${v.strikes} consecutive failures. Check the Strikes tab.`, `mute-${k}`);
+    });
+
+  } catch (e) { console.error('loadOverview:', e); }
+}
+
+// =============================================================================
+// TASKS
+// =============================================================================
+async function loadTasks() {
+  const today     = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+
+  const [tasks, stats, logsToday, logsYest] = await Promise.all([
+    api('/tasks').catch(() => ({ tasks: {} })),
+    api('/logs/stats/summary?days=7').catch(() => ({ tasks: {} })),
+    api(`/logs/${today}`).catch(() => ({ entries: [] })),
+    api(`/logs/${yesterday}`).catch(() => ({ entries: [] })),
+  ]);
+
+  state.tasks = tasks?.tasks || {};
+  state.stats = stats || {};
+
+  // Last-run map: task_key → most recent log entry
+  const lastRunMap = {};
+  [...(logsYest?.entries || []), ...(logsToday?.entries || [])].forEach(e => {
+    if (e.task_key) lastRunMap[e.task_key] = e;
+  });
+
+  // Sync task filter dropdown
+  const sel  = document.getElementById('log-task-filter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">all tasks</option>';
+  Object.entries(state.tasks).forEach(([k, t]) => {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = `${t.name} (${k})`;
+    sel.appendChild(o);
+  });
+  sel.value = prev;
+
+  // Render rows
+  const tbody = document.getElementById('tasks-tbody');
+  if (!Object.keys(state.tasks).length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tasks configured</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = Object.entries(state.tasks).map(([key, task]) => {
+    const s       = (stats?.tasks || {})[key] || { total: 0, failure: 0, timeout: 0, error_rate: 0 };
+    const errPct  = Math.round((s.error_rate || 0) * 100);
+    const errClass = errPct === 0 ? 'ok' : errPct < 20 ? 'warn' : 'bad';
+    return `<tr data-key="${esc(key)}">
+      <td>
+        <div class="task-name">${esc(task.name)}</div>
+        <div class="task-key">${esc(key)}</div>
+      </td>
+      <td><span class="freq-badge">${esc(formatFreq(task))}</span></td>
+      <td><span class="error-rate ${errClass}">${errPct}%
+        <span style="color:var(--muted)">(${(s.failure||0)+(s.timeout||0)}/${s.total||0})</span>
+      </span></td>
+      <td id="lastrun-${esc(key)}" style="font-size:11px;color:var(--muted)">—</td>
+      <td>
+        <label class="toggle" title="${task.enabled ? 'Disable' : 'Enable'} task">
+          <input type="checkbox" class="task-toggle" data-key="${esc(key)}" ${task.enabled ? 'checked' : ''}>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </td>
+      <td>
+        <div class="btn-row">
+          <button class="action-btn run-btn"    data-action="run"    data-key="${esc(key)}" data-name="${esc(task.name)}">▶ run</button>
+          <button class="action-btn"            data-action="edit"   data-key="${esc(key)}">edit</button>
+          <button class="action-btn danger"     data-action="strikes" data-key="${esc(key)}">reset strikes</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Attach events to generated rows (no inline onclick)
+  tbody.querySelectorAll('.task-toggle').forEach(cb => {
+    cb.addEventListener('change', () => toggleTask(cb.dataset.key, cb.checked, cb));
+  });
+  tbody.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { action, key, name } = btn.dataset;
+      if (action === 'run')     runTask(key, name);
+      if (action === 'edit')    openEdit(key);
+      if (action === 'strikes') resetTaskStrikes(key);
+    });
+  });
+
+  // Fill last-run cells
+  Object.entries(lastRunMap).forEach(([key, entry]) => {
+    const cell = document.getElementById(`lastrun-${key}`);
+    if (!cell) return;
+    const tagCls = { success: 'tag-success', failure: 'tag-failure', timeout: 'tag-timeout' }[entry.status] || 'tag-skipped';
+    cell.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <span class="status-tag ${tagCls}" style="width:fit-content">${esc(entry.status)}</span>
+        <span style="color:var(--muted2)">${timeAgo(entry.ts)}</span>
+      </div>`;
+  });
+}
+
+function formatFreq(task) {
+  const f = task.frequency;
+  if (f === 'interval') return `every ${task.interval_value} ${task.interval_unit}`;
+  if (f === 'weekly')   return `weekly · ${(task.days_of_week || []).map(d => typeof d === 'number' ? (_DAY_NAMES[d] || d) : d).join(',')} · ${(task.times || []).join(',')}`;
+  if (f === 'monthly')  return `monthly · day ${task.day_of_month} · ${(task.times || []).join(',')}`;
+  if (f === 'yearly')   return `yearly · ${task.month_day} · ${(task.times || []).join(',')}`;
+  if (f === 'specific') return `once on ${task.specific_date}`;
+  if (f === 'once')     return `once on ${task.specific_date}`;
+  return `${f} · ${(task.times || []).join(',')}`;
+}
+
+async function toggleTask(key, enabled, el) {
+  try {
+    await api(`/tasks/${key}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' });
+    toast(enabled ? `✓ ${key} enabled` : `○ ${key} disabled`, 'ok');
+  } catch (e) {
+    el.checked = !enabled;
+    toast('Failed: ' + e.message, 'err');
+  }
+}
+
+async function runTask(key, name) {
+  document.getElementById('run-task-name').textContent = name;
+  document.getElementById('run-body').innerHTML =
+    '<div class="empty"><div class="spinner"></div><div style="margin-top:12px;color:var(--muted)">running…</div></div>';
+  openModal('run-modal');
+  try {
+    const r = await api(`/tasks/${key}/run`, { method: 'POST' });
+    const cls  = r.success ? 'ok' : 'err';
+    const icon = r.success ? '✓' : '✗';
+    let html = `<div class="run-status ${cls}">${icon} ${esc(r.status?.toUpperCase())} — exit ${r.exit_code} in ${r.duration_s?.toFixed(2)}s</div>`;
+    if (r.stdout) html += `<div style="color:var(--muted);font-size:11px;margin-bottom:4px">stdout:</div><div class="run-output">${esc(r.stdout)}</div>`;
+    if (r.stderr) html += `<div style="color:var(--red);font-size:11px;margin:8px 0 4px">stderr:</div><div class="run-output" style="border-color:rgba(231,76,60,.3)">${esc(r.stderr)}</div>`;
+    if (!r.stdout && !r.stderr) html += '<div class="run-output">(no output)</div>';
+    document.getElementById('run-body').innerHTML = html;
+    await loadTasks();
+  } catch (e) {
+    document.getElementById('run-body').innerHTML =
+      `<div class="run-status err">✗ Error</div><div class="run-output">${esc(e.message)}</div>`;
+  }
+}
+
+async function reloadTasks() {
+  try {
+    await api('/config/reload', { method: 'POST' });
+    toast('Config reloaded from disk', 'ok');
+    await loadTasks();
+  } catch { toast('Reload failed', 'err'); }
+}
+
+// =============================================================================
+// EDIT MODAL
+// =============================================================================
+function openEdit(key) {
+  const task = state.tasks[key];
+  if (!task) return;
+  document.getElementById('edit-task-key').textContent   = key;
+  document.getElementById('ef-name').value               = task.name || '';
+  document.getElementById('ef-script').value             = task.script || '';
+  document.getElementById('ef-frequency').value          = task.frequency || 'daily';
+  document.getElementById('ef-timeout').value            = task.timeout || 300;
+  document.getElementById('ef-times').value              = (task.times || []).join(',');
+  document.getElementById('ef-days').value               = (task.days_of_week || []).map(d => typeof d === 'number' ? (_DAY_NAMES[d] || d) : d).join(',');
+  document.getElementById('ef-dom').value                = task.day_of_month || '';
+  document.getElementById('ef-md').value                 = task.month_day || '';
+  document.getElementById('ef-sd').value                 = task.specific_date || '';
+  document.getElementById('ef-iv').value                 = task.interval_value || '';
+  document.getElementById('ef-iu').value                 = task.interval_unit || 'minutes';
+  document.getElementById('ef-nos').value                = task.notify_on_success ? 'true' : 'false';
+  document.getElementById('ef-nof').value                = task.notify_on_failure ? 'true' : 'false';
+  updateEditForm();
+  openModal('edit-modal');
+}
+
+function updateEditForm() {
+  const f = document.getElementById('ef-frequency').value;
+  document.getElementById('ef-times-row').style.display    = f === 'interval' ? 'none' : '';
+  document.getElementById('ef-days-row').style.display     = f === 'weekly'   ? '' : 'none';
+  document.getElementById('ef-dom-row').style.display      = f === 'monthly'  ? '' : 'none';
+  document.getElementById('ef-md-row').style.display       = f === 'yearly'   ? '' : 'none';
+  document.getElementById('ef-sd-row').style.display       = ['specific', 'once'].includes(f) ? '' : 'none';
+  document.getElementById('ef-interval-row').style.display = f === 'interval' ? '' : 'none';
+}
+
+async function saveTaskEdit() {
+  const key = document.getElementById('edit-task-key').textContent;
+  const f   = document.getElementById('ef-frequency').value;
+  const body = {
+    name:              document.getElementById('ef-name').value,
+    script:            document.getElementById('ef-script').value,
+    frequency:         f,
+    timeout:           parseInt(document.getElementById('ef-timeout').value),
+    notify_on_success: document.getElementById('ef-nos').value === 'true',
+    notify_on_failure: document.getElementById('ef-nof').value === 'true',
+  };
+  const timesRaw = document.getElementById('ef-times').value;
+  if (timesRaw) body.times = timesRaw.split(',').map(s => s.trim()).filter(Boolean);
+  if (f === 'weekly')   body.days_of_week  = document.getElementById('ef-days').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (f === 'monthly')  body.day_of_month  = parseInt(document.getElementById('ef-dom').value);
+  if (f === 'yearly')   body.month_day     = document.getElementById('ef-md').value;
+  if (['specific', 'once'].includes(f)) body.specific_date = document.getElementById('ef-sd').value;
+  if (f === 'interval') {
+    body.interval_value = parseInt(document.getElementById('ef-iv').value);
+    body.interval_unit  = document.getElementById('ef-iu').value;
+  }
+  try {
+    await api(`/tasks/${key}`, { method: 'PATCH', body: JSON.stringify(body) });
+    toast('Task updated', 'ok');
+    closeModal('edit-modal');
+    await loadTasks();
+  } catch (e) { toast('Save failed: ' + e.message, 'err'); }
+}
+
+// =============================================================================
+// LOGS
+// =============================================================================
+async function fetchLogs() {
+  const from    = document.getElementById('log-date-from').value;
+  const to      = document.getElementById('log-date-to').value;
+  const taskKey = document.getElementById('log-task-filter').value;
+  if (!from || !to) return;
+
+  document.getElementById('logs-container').innerHTML =
+    '<div class="empty"><div class="spinner"></div></div>';
+  try {
+    let url = `/logs/range/query?start=${from}&end=${to}`;
+    if (taskKey) url += `&task_key=${taskKey}`;
+    const data = await api(url);
+    state.logs = (data?.entries || []).reverse();
+    filterLogs();
+  } catch (e) {
+    document.getElementById('logs-container').innerHTML =
+      `<div class="empty">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function setStatusFilter(el) {
+  document.querySelectorAll('#status-filters .filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  state.statusFilter = el.dataset.status;
+  filterLogs();
+}
+
+function filterLogs() {
+  const q = document.getElementById('log-search').value.toLowerCase();
+  let filtered = state.logs;
+  if (state.statusFilter !== 'all') filtered = filtered.filter(e => e.status === state.statusFilter);
+  if (q) filtered = filtered.filter(e => JSON.stringify(e).toLowerCase().includes(q));
+  document.getElementById('log-count').textContent = `${filtered.length} of ${state.logs.length} entries`;
+  renderLogList(filtered, document.getElementById('logs-container'), false);
+}
+
+function renderLogList(entries, container, compact = false) {
+  if (!entries.length) { container.innerHTML = '<div class="empty">No entries</div>'; return; }
+
+  const header = `<div class="log-entry log-header">
+    <div class="log-cell ts">timestamp</div>
+    <div class="log-cell task">task</div>
+    <div class="log-cell">status</div>
+    <div class="log-cell dur">duration</div>
+    <div class="log-cell detail">detail</div>
+  </div>`;
+
+  const rows = entries.map(e => {
+    const tagCls  = { success: 'tag-success', failure: 'tag-failure', timeout: 'tag-timeout', skipped: 'tag-skipped' }[e.status] || 'tag-skipped';
+    const dur     = typeof e.duration_s === 'number' ? e.duration_s.toFixed(2) + 's' : '—';
+    const detail  = e.detail || e.stderr || e.stdout || '';
+    const forced  = e.forced ? '<span class="forced-tag">forced</span>' : '';
+    return `<div class="log-entry">
+      <div class="log-cell ts">${fmtTs(e.ts)}</div>
+      <div class="log-cell task">${esc(e.task_name || e.task_key)}${forced}</div>
+      <div class="log-cell"><span class="status-tag ${tagCls}">${esc(e.status)}</span></div>
+      <div class="log-cell dur">${esc(dur)}</div>
+      <div class="log-cell detail">${esc(detail.slice(0, 120))}${detail.length > 120 ? '…' : ''}</div>
+    </div>
+    <div class="log-row-detail"><pre>${esc(buildDetailText(e))}</pre></div>`;
+  }).join('');
+
+  container.innerHTML = header + rows;
+
+  // Attach expand handlers after render
+  container.querySelectorAll('.log-entry:not(.log-header)').forEach((row, i) => {
+    row.addEventListener('click', () => {
+      const detail = row.nextElementSibling;
+      if (!detail?.classList.contains('log-row-detail')) return;
+      const isOpen = detail.style.display === 'block';
+      detail.style.display = isOpen ? 'none' : 'block';
+      row.classList.toggle('expanded', !isOpen);
+    });
+  });
+}
+
+function buildDetailText(e) {
+  const lines = [];
+  if (e.ts)              lines.push(`Timestamp : ${e.ts}`);
+  if (e.task_key)        lines.push(`Task key  : ${e.task_key}`);
+  if (e.exit_code != null) lines.push(`Exit code : ${e.exit_code}`);
+  if (e.duration_s != null) lines.push(`Duration  : ${e.duration_s.toFixed(3)}s`);
+  if (e.forced)          lines.push(`Forced    : yes`);
+  if (e.detail)          lines.push(`\nDetail:\n${e.detail}`);
+  if (e.stdout)          lines.push(`\nStdout:\n${e.stdout}`);
+  if (e.stderr)          lines.push(`\nStderr:\n${e.stderr}`);
+  return lines.join('\n');
+}
+
+// =============================================================================
+// STRIKES
+// =============================================================================
+async function loadStrikes() {
+  const container = document.getElementById('strikes-container');
+  try {
+    const s      = await api('/status');
+    const strikes = s?.strikes || {};
+    const limit  = 10;
+
+    let html = `<div style="display:flex;justify-content:space-between;margin-bottom:16px;font-size:11px;color:var(--muted)">
+      <span>Global sent: <strong style="color:var(--text)">${strikes.global_sent || 0}</strong></span>
+      <span>${strikes.global_muted
+        ? '<span style="color:var(--red)">⚠ globally muted</span>'
+        : '<span style="color:var(--green)">● active</span>'}</span>
+    </div>`;
+
+    const tasks = strikes.tasks || {};
+    if (!Object.keys(tasks).length) {
+      html += '<div class="empty">No strike data — all tasks are clean</div>';
+    } else {
+      html += Object.entries(tasks).map(([key, v]) => {
+        const pct = Math.min((v.strikes / limit) * 100, 100);
+        const cls = v.muted ? 'muted' : pct > 60 ? 'warn' : '';
+        return `<div class="strike-row" data-key="${esc(key)}">
+          <div style="min-width:140px">
+            <div style="font-size:12px">${esc(state.tasks[key]?.name || key)}</div>
+            <div style="font-size:10px;color:var(--muted)">${esc(key)}</div>
+          </div>
+          <div class="strike-bar-wrap"><div class="strike-bar ${cls}" style="width:${pct}%"></div></div>
+          <div style="min-width:64px;text-align:right;font-size:12px;${v.muted ? 'color:var(--red)' : 'color:var(--muted)'}">
+            ${v.muted ? '🔇 muted' : `${v.strikes} strikes`}
+          </div>
+          <button class="action-btn" style="margin-left:12px" data-reset="${esc(key)}">reset</button>
+        </div>`;
+      }).join('');
+    }
+
+    container.innerHTML = html;
+
+    // Attach reset buttons
+    container.querySelectorAll('[data-reset]').forEach(btn => {
+      btn.addEventListener('click', () => resetTaskStrikes(btn.dataset.reset));
+    });
+  } catch (e) {
+    container.innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function resetAllStrikes() {
+  try {
+    await api('/tasks/strikes/reset', { method: 'POST' });
+    toast('All strikes reset', 'ok');
+    _shownAlerts.clear();
+    document.getElementById('alerts-banner').innerHTML = '';
+    await loadStrikes();
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
+}
+
+async function resetTaskStrikes(key) {
+  try {
+    await api(`/tasks/${key}/strikes/reset`, { method: 'POST' });
+    toast(`Strikes reset for ${key}`, 'ok');
+    await loadStrikes();
+  } catch (e) { toast('Failed: ' + e.message, 'err'); }
+}
+
+// =============================================================================
+// MODALS
+// =============================================================================
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('open'); });
+});
+
+// =============================================================================
+// TOAST
+// =============================================================================
+function toast(msg, type = 'ok') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type === 'ok' ? '✓' : '✗'}</span> ${esc(msg)}`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// =============================================================================
+// HELPERS
+// =============================================================================
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }) + ' ' +
+         d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+const _DAY_NAMES = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+  if (diff < 60)    return `${diff}s ago`;
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
+// =============================================================================
+// BOOT — auto-login from session
+// =============================================================================
+(async () => {
+  const saved = sessionStorage.getItem('pysched_token');
+  if (saved) {
+    document.getElementById('token-input').value = saved;
+    await doAuth();
+  }
+})();
+</script>
+</body>
+</html>

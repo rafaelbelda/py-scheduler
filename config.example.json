@@ -1,0 +1,103 @@
+{
+    "app_logging_level": "INFO",
+    "api": {
+        "enabled": true,
+        "logging_level": "info",
+        "disable_docs": false,
+        "host": "0.0.0.0",
+        "port": 8765,
+        "token": "changeme"
+    },
+    "scheduler": {
+        "max_workers": 4,
+        "log_dir": "logs",
+        "log_retention_days": 90
+    },
+    "webhook": {
+        "enabled": false,
+        "url": "https://ntfy.sh/your-topic",
+        "method": "POST",
+        "headers": {},
+        "strike_limit": 10,
+        "strike_reset_hours": 24,
+        "global_cap": 100
+    },
+    "tasks": {
+        "example_daily": {
+            "name": "Daily Example",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "daily",
+            "times": ["07:00", "19:00"],
+            "timeout": 60,
+            "notify_on_success": false,
+            "notify_on_failure": true
+        },
+        "example_weekly": {
+            "name": "Weekly Example",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "weekly",
+            "days_of_week": ["monday", "thursday"],
+            "times": ["09:00"],
+            "timeout": 120,
+            "notify_on_success": false,
+            "notify_on_failure": true
+        },
+        "example_monthly": {
+            "name": "Monthly Example",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "monthly",
+            "day_of_month": 1,
+            "times": ["08:00"],
+            "timeout": 300,
+            "notify_on_success": true,
+            "notify_on_failure": true
+        },
+        "example_yearly": {
+            "name": "Yearly Example",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "yearly",
+            "month_day": "01-01",
+            "times": ["00:01"],
+            "timeout": 300,
+            "notify_on_success": true,
+            "notify_on_failure": true
+        },
+        "example_interval": {
+            "name": "Every 6 Hours",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "interval",
+            "interval_unit": "hours",
+            "interval_value": 6,
+            "timeout": 120,
+            "notify_on_success": false,
+            "notify_on_failure": true
+        },
+        "example_specific": {
+            "name": "One Specific Date",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "specific",
+            "specific_date": "2025-12-31",
+            "times": ["23:59"],
+            "timeout": 60,
+            "notify_on_success": true,
+            "notify_on_failure": true
+        },
+        "example_once": {
+            "name": "Run Once Then Disable",
+            "enabled": false,
+            "script": "tasks/example.py",
+            "frequency": "once",
+            "specific_date": "2025-06-01",
+            "times": ["10:00"],
+            "timeout": 60,
+            "notify_on_success": true,
+            "notify_on_failure": true
+        }
+    }
+}
