@@ -99,6 +99,7 @@ send(
     message = "Something interesting happened",
     priority  = "high",
     click_url = "https://example.com",
+    topic = "custom-topic"
     emojis    = ["tada"],
 )
 ```
@@ -145,7 +146,7 @@ After adding new tasks to `config.json`, hit **reload config** in the dashboard 
 | `scheduler.log_dir` | `"logs"` | Log directory (relative to project root) |
 | `scheduler.log_retention_days` | `30` | Days to keep logs; `0` = keep forever |
 | `ntfy.enabled` | `true` | Enable ntfy push notifications |
-| `ntfy.url` | `"https://ntfy.sh/my-topic"` | Full topic URL |
+| `ntfy.topic` | `"my-topic"` | Your ntfy topic |
 | `ntfy.token` | `""` | ntfy Bearer token (optional) |
 | `ntfy.strike_limit` | `10` | Consecutive failures before muting a task |
 | `ntfy.strike_reset_hours` | `24` | Hours of silence before strike auto-reset |

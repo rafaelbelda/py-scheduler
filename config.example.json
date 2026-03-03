@@ -15,7 +15,7 @@
     },
     "webhook": {
         "enabled": false,
-        "url": "https://ntfy.sh/your-topic",
+        "topic": "your-topic",
         "method": "POST",
         "headers": {},
         "strike_limit": 10,

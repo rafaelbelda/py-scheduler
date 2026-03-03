@@ -108,6 +108,7 @@ def reset_strikes(task_key: str | None = None) -> None:
 def send(
     title: str,
     message: str,
+    topic: str | None = None,
     *,
     priority: str = "default",
     click_url: str | None = None,
@@ -135,10 +136,14 @@ def send(
     if not cfg.get("enabled", False):
         return False
 
-    url = (cfg.get("url") or "").strip()
-    if not url:
-        logger.warning("notifier: ntfy enabled but 'url' is empty")
+    topic = (topic if topic is not None else cfg.get("topic")) or ""
+    topic = topic.strip()
+    
+    if not topic:
+        logger.warning("notifier: ntfy enabled but 'topic' is empty")
         return False
+    
+    url = "https://ntfy.sh/" + topic
 
     return _send_raw(
         url               = url,

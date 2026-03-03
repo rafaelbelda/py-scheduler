@@ -54,7 +54,7 @@ def _defaults() -> dict:
         },
         "ntfy": {
             "enabled": True,
-            "url": "https://ntfy.sh/my-topic",  # full topic URL e.g. "https://ntfy.sh/my-topic"
+            "topic": "my-topic",  # full topic URL e.g. "https://ntfy.sh/my-topic"
             "token": "",           # Bearer token (optional)
             "strike_limit": 10,    # failures before muting a task
             "strike_reset_hours": 24,  # hours of silence before auto-reset
