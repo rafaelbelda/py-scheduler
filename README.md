@@ -40,6 +40,16 @@ Open `http://localhost:8765` for the dashboard.
 
 The dashboard is meant to be accessible only through a secure network, please configure your firewall and bind address accordingly.
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/bf8c7ead-0fbe-4068-b9f1-163c3b231532" width="49%" />
+  <img src="https://github.com/user-attachments/assets/a5443e0d-f03d-4099-a20f-91e6cec9e999" width="49%" />
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/efdf2e23-4cff-4cda-ac14-f4c3cee17941" width="49%" />
+  <img src="https://github.com/user-attachments/assets/ce7e00a3-fab4-4efe-af2e-59b3b2c6af6b" width="49%" />
+</p>
+
 To run without the API or dashboard:
 
 ```bash
