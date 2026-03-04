@@ -273,7 +273,7 @@ def notify_result(result: RunResult) -> None:
                 title   = f"SUCCESS: Task '{result.task_name}'"
                 message = f"Task '{result.task_name}' completed in {result.duration_s:.2f}s."
                 if result.stdout:
-                    message += f"\nstdout: {result.stdout[:500]}"
+                    message += f"\nstdout: {result.stdout[:80]}{'... (truncated)' if len(result.stdout) > 80 else ''}"
                 send_kwargs = dict(url=url, token=token, title=title, message=message,
                                    priority="low", click_url=None, emojis=None,
                                    use_latin1_encoding=False)

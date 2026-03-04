@@ -394,6 +394,28 @@
   .toast.err  { border-color: color-mix(in srgb, var(--red)   40%, transparent); }
   @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
+  /* ── View toggle ── */
+  .view-toggle-group {
+    display: flex; border: 1px solid var(--border2); border-radius: var(--radius-sm); overflow: hidden;
+  }
+  .view-toggle-btn {
+    background: var(--bg3); border: none; color: var(--muted);
+    padding: 5px 12px; font-size: 11px; font-family: var(--mono);
+    cursor: pointer; transition: background .15s, color .15s; white-space: nowrap;
+  }
+  .view-toggle-btn + .view-toggle-btn { border-left: 1px solid var(--border2); }
+  .view-toggle-btn.active { background: var(--accent); color: #fff; }
+  .view-toggle-btn:not(.active):hover { background: var(--border2); color: var(--text); }
+
+  /* ── Graph tooltip ── */
+  #graph-tooltip {
+    display: none; position: fixed;
+    background: var(--bg2); border: 1px solid var(--border2);
+    border-radius: 8px; padding: 10px 13px; font-size: 11px;
+    pointer-events: none; z-index: 400; min-width: 200px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.5); line-height: 1.6;
+  }
+
   /* misc */
   .flex-gap { display: flex; gap: 10px; align-items: center; }
   .tag-muted { background: rgba(107,107,128,.15); color: var(--muted); display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
@@ -449,11 +471,17 @@
     <!-- Task status strip -->
     <div class="section-header">
       <div class="section-title">Task Status</div>
-      <div style="display:flex;align-items:center;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
         <span id="last-updated" style="font-size:10px;color:var(--muted2)"></span>
+        <div class="view-toggle-group">
+          <button class="view-toggle-btn active" id="vbtn-table" onclick="setOverviewView('table',this)">≡ table</button>
+          <button class="view-toggle-btn" id="vbtn-graph" onclick="setOverviewView('graph',this)">◎ graph</button>
+        </div>
         <button class="action-btn" onclick="loadOverview()">↻ refresh</button>
       </div>
     </div>
+
+    <!-- Table view -->
     <div id="task-status-wrap" class="table-wrap" style="margin-bottom:24px">
       <table>
         <thead><tr>
@@ -463,6 +491,34 @@
           <tr><td colspan="5" class="empty"><div class="spinner"></div></td></tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Graph view -->
+    <div id="task-graph-wrap" style="display:none;margin-bottom:24px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted)">from</span>
+        <input id="graph-from" class="log-input" type="datetime-local" style="font-size:11px;padding:5px 8px">
+        <span style="font-size:11px;color:var(--muted)">to</span>
+        <input id="graph-to" class="log-input" type="datetime-local" style="font-size:11px;padding:5px 8px">
+        <button class="action-btn" onclick="loadGraph()">load</button>
+        <button class="action-btn graph-preset-btn" onclick="setGraphPreset(12)">12h</button>
+        <button class="action-btn graph-preset-btn" onclick="setGraphPreset(24)">24h</button>
+        <button class="action-btn graph-preset-btn" onclick="setGraphPreset(72)">3d</button>
+        <button class="action-btn graph-preset-btn" onclick="setGraphPreset(168)">7d</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--muted)">
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0"></span>success</span>
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--red);display:inline-block;flex-shrink:0"></span>failure</span>
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--orange);display:inline-block;flex-shrink:0"></span>timeout</span>
+        </div>
+      </div>
+      <div class="table-wrap" style="overflow:visible;position:relative;padding:0">
+        <div id="graph-canvas-wrap" style="overflow-x:auto">
+          <canvas id="task-graph" style="display:block"></canvas>
+        </div>
+        <div id="graph-tooltip"></div>
+        <div id="graph-empty" class="empty" style="display:none">No runs in this time range</div>
+        <div id="graph-loading" class="empty" style="display:none"><div class="spinner"></div></div>
+      </div>
     </div>
 
     <!-- Recent issues -->
@@ -704,6 +760,13 @@ async function init() {
 
   // Wire up search debounce here (not inline)
   document.getElementById('log-search').addEventListener('input', debounce(filterLogs, 200));
+
+  // Init graph default range (12h) — inputs populated but data not fetched until tab opens
+  const _now12  = new Date();
+  const _from12 = new Date(_now12 - 12 * 3600 * 1000);
+  const _fmt12  = d => d.toISOString().slice(0, 16);
+  document.getElementById('graph-from').value = _fmt12(_from12);
+  document.getElementById('graph-to').value   = _fmt12(_now12);
 
   await Promise.all([loadOverview(), loadTasks()]);
   startPolling();
@@ -1366,6 +1429,351 @@ function debounce(fn, ms) {
     await doAuth();
   }
 })();
+
+// =============================================================================
+// GRAPH VIEW — Scatter/dot chart (one row per task, dots = runs)
+// =============================================================================
+
+const _graphState = {
+  view: 'table',   // 'table' | 'graph'
+  preset: 12,      // active preset hours
+  entries: [],     // raw log entries for current range
+  tasks: {},       // task key → task def (from state.tasks)
+  fromMs: 0,
+  toMs: 0,
+};
+
+function setOverviewView(view, btn) {
+  _graphState.view = view;
+  document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('task-status-wrap').style.display  = view === 'table' ? '' : 'none';
+  document.getElementById('task-graph-wrap').style.display   = view === 'graph' ? '' : 'none';
+  if (view === 'graph') {
+    // If graph hasn't been loaded yet, init with default 12h preset
+    if (!_graphState.entries.length && !document.getElementById('graph-from').value) {
+      setGraphPreset(12);
+    } else {
+      _renderGraph();
+    }
+  }
+}
+
+function setGraphPreset(hours) {
+  _graphState.preset = hours;
+  const now  = new Date();
+  const from = new Date(now - hours * 3600 * 1000);
+  const fmt  = d => d.toISOString().slice(0, 16); // datetime-local format
+  document.getElementById('graph-from').value = fmt(from);
+  document.getElementById('graph-to').value   = fmt(now);
+  loadGraph();
+}
+
+async function loadGraph() {
+  const fromVal = document.getElementById('graph-from').value;
+  const toVal   = document.getElementById('graph-to').value;
+  if (!fromVal || !toVal) return;
+
+  const fromDate = new Date(fromVal);
+  const toDate   = new Date(toVal);
+  _graphState.fromMs = fromDate.getTime();
+  _graphState.toMs   = toDate.getTime();
+
+  const startStr = fromDate.toISOString().slice(0, 10);
+  const endStr   = toDate.toISOString().slice(0, 10);
+
+  _showGraphState('loading');
+  try {
+    const data = await api(`/logs/range/query?start=${startStr}&end=${endStr}`);
+    const all = (data?.entries || []).filter(e => {
+      const t = new Date(e.ts).getTime();
+      return t >= _graphState.fromMs && t <= _graphState.toMs;
+    });
+    _graphState.entries = all;
+    _graphState.tasks   = state.tasks;
+    if (!all.length) { _showGraphState('empty'); return; }
+    _showGraphState('canvas');
+    _renderGraph();
+  } catch (e) {
+    _showGraphState('empty');
+    console.error('loadGraph:', e);
+  }
+}
+
+function _showGraphState(which) {
+  document.getElementById('graph-canvas-wrap').style.display = which === 'canvas'  ? '' : 'none';
+  document.getElementById('graph-empty').style.display       = which === 'empty'   ? '' : 'none';
+  document.getElementById('graph-loading').style.display     = which === 'loading' ? '' : 'none';
+}
+
+function _renderGraph() {
+  const canvas  = document.getElementById('task-graph');
+  const wrap    = document.getElementById('graph-canvas-wrap');
+  const entries = _graphState.entries;
+  const tasks   = _graphState.tasks;
+
+  // ── Layout constants ──────────────────────────────────────────────────────
+  const LABEL_W  = 160;   // left gutter for task labels
+  const ROW_H    = 38;    // height per task row
+  const DOT_R    = 5;     // base dot radius
+  const PAD_TOP  = 36;    // space for x-axis labels at top
+  const PAD_BOT  = 8;
+  const MIN_W    = 600;
+
+  // Collect unique task keys in order (tasks from config first, then any orphan log keys)
+  const configKeys = Object.keys(tasks);
+  const logKeys    = [...new Set(entries.map(e => e.task_key))];
+  const allKeys    = [...configKeys, ...logKeys.filter(k => !configKeys.includes(k))];
+  // Only keep tasks that have entries in range OR are in config
+  const rowKeys    = allKeys.filter(k => configKeys.includes(k) || logKeys.includes(k));
+
+  const numRows  = rowKeys.length;
+  const H        = PAD_TOP + numRows * ROW_H + PAD_BOT;
+  const W        = Math.max(wrap.clientWidth || MIN_W, MIN_W);
+  const PLOT_W   = W - LABEL_W - 16;
+
+  canvas.width  = W;
+  canvas.height = H;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Colours ───────────────────────────────────────────────────────────────
+  const C = {
+    bg2:     '#111113',
+    bg3:     '#18181c',
+    border:  '#222228',
+    border2: '#2e2e38',
+    text:    '#e8e8f0',
+    muted:   '#6b6b80',
+    muted2:  '#44444f',
+    green:   '#2ecc71',
+    red:     '#e74c3c',
+    orange:  '#f39c12',
+    accent:  '#ff676f',
+  };
+
+  // ── Background ────────────────────────────────────────────────────────────
+  ctx.fillStyle = C.bg2;
+  ctx.fillRect(0, 0, W, H);
+
+  // Label gutter background
+  ctx.fillStyle = C.bg3;
+  ctx.fillRect(0, 0, LABEL_W, H);
+
+  // Separator line
+  ctx.strokeStyle = C.border2;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(LABEL_W, 0);
+  ctx.lineTo(LABEL_W, H);
+  ctx.stroke();
+
+  // ── Time axis ─────────────────────────────────────────────────────────────
+  const fromMs = _graphState.fromMs;
+  const toMs   = _graphState.toMs;
+  const spanMs = toMs - fromMs;
+
+  function xForTime(ms) {
+    return LABEL_W + ((ms - fromMs) / spanMs) * PLOT_W;
+  }
+
+  // Compute nice tick interval
+  const spanH = spanMs / 3600000;
+  let tickIntervalMs, tickFmt;
+  if (spanH <= 6)        { tickIntervalMs = 30 * 60000;   tickFmt = 'HH:MM'; }
+  else if (spanH <= 24)  { tickIntervalMs = 2 * 3600000;  tickFmt = 'HH:MM'; }
+  else if (spanH <= 72)  { tickIntervalMs = 12 * 3600000; tickFmt = 'Mon DD HH:MM'; }
+  else                   { tickIntervalMs = 24 * 3600000; tickFmt = 'Mon DD'; }
+
+  // Snap first tick to a clean boundary
+  const firstTick = Math.ceil(fromMs / tickIntervalMs) * tickIntervalMs;
+
+  ctx.font = '10px JetBrains Mono, Cascadia Code, Consolas, monospace';
+  ctx.fillStyle = C.muted;
+  ctx.textAlign = 'center';
+
+  for (let t = firstTick; t <= toMs; t += tickIntervalMs) {
+    const x = xForTime(t);
+    const d = new Date(t);
+    let label;
+    if (tickFmt === 'HH:MM') {
+      label = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    } else if (tickFmt === 'Mon DD HH:MM') {
+      label = d.toLocaleDateString('en-GB',{month:'short',day:'numeric'}) + ' ' +
+              d.getHours().toString().padStart(2,'0') + ':00';
+    } else {
+      label = d.toLocaleDateString('en-GB', {month:'short', day:'numeric'});
+    }
+
+    // Tick line
+    ctx.strokeStyle = C.border;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, PAD_TOP - 6);
+    ctx.lineTo(x, H - PAD_BOT);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Label
+    ctx.fillStyle = C.muted;
+    ctx.fillText(label, x, PAD_TOP - 10);
+  }
+
+  // ── Row backgrounds + labels ──────────────────────────────────────────────
+  ctx.textAlign = 'right';
+  rowKeys.forEach((key, i) => {
+    const y = PAD_TOP + i * ROW_H;
+    const isEven = i % 2 === 0;
+
+    // Alternating row bg
+    if (isEven) {
+      ctx.fillStyle = 'rgba(255,255,255,0.015)';
+      ctx.fillRect(0, y, W, ROW_H);
+    }
+
+    // Row separator
+    ctx.strokeStyle = C.border;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y + ROW_H);
+    ctx.lineTo(W, y + ROW_H);
+    ctx.stroke();
+
+    // Task name
+    const task = tasks[key];
+    const name = task?.name || key;
+    const enabled = task?.enabled !== false;
+    ctx.font = `500 11px JetBrains Mono, Cascadia Code, Consolas, monospace`;
+    ctx.fillStyle = enabled ? C.text : C.muted2;
+    // Truncate label if needed
+    let label = name;
+    while (ctx.measureText(label).width > LABEL_W - 16 && label.length > 4) {
+      label = label.slice(0, -1);
+    }
+    if (label !== name) label = label.slice(0, -1) + '…';
+    ctx.fillText(label, LABEL_W - 8, y + ROW_H / 2 + 4);
+  });
+
+  // ── Dots ─────────────────────────────────────────────────────────────────
+  const DOT_COLORS = { success: C.green, failure: C.red, timeout: C.orange };
+  const GLOW_COLORS = {
+    success: 'rgba(46,204,113,0.3)',
+    failure: 'rgba(231,76,60,0.3)',
+    timeout: 'rgba(243,156,18,0.3)',
+  };
+
+  // Store dot hit areas for hover
+  _graphState.dots = [];
+
+  entries.forEach(e => {
+    const rowIdx = rowKeys.indexOf(e.task_key);
+    if (rowIdx === -1) return;
+    const ms = new Date(e.ts).getTime();
+    if (ms < fromMs || ms > toMs) return;
+
+    const x   = xForTime(ms);
+    const cy  = PAD_TOP + rowIdx * ROW_H + ROW_H / 2;
+    const col = DOT_COLORS[e.status] || C.muted;
+    const glow = GLOW_COLORS[e.status];
+
+    // Outer glow for failures/timeouts
+    if (e.status === 'failure' || e.status === 'timeout') {
+      ctx.beginPath();
+      ctx.arc(x, cy, DOT_R + 3, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+    }
+
+    // Dot
+    ctx.beginPath();
+    ctx.arc(x, cy, DOT_R, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+
+    // White border for contrast
+    ctx.beginPath();
+    ctx.arc(x, cy, DOT_R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    _graphState.dots.push({ x, cy, r: DOT_R + 4, entry: e, rowIdx });
+  });
+
+  // ── Attach hover ──────────────────────────────────────────────────────────
+  canvas.onmousemove = (ev) => _graphHover(ev, canvas);
+  canvas.onmouseleave = () => {
+    document.getElementById('graph-tooltip').style.display = 'none';
+    canvas.style.cursor = 'default';
+  };
+}
+
+function _graphHover(ev, canvas) {
+  const rect   = canvas.getBoundingClientRect();
+  // Scale for devicePixelRatio if needed (canvas is 1:1 here but be safe)
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (ev.clientX - rect.left) * scaleX;
+  const my = (ev.clientY - rect.top)  * scaleY;
+
+  const tooltip = document.getElementById('graph-tooltip');
+  const dots    = _graphState.dots || [];
+
+  // Find nearest dot within hit radius
+  let hit = null;
+  let bestDist = Infinity;
+  for (const d of dots) {
+    const dist = Math.sqrt((mx - d.x) ** 2 + (my - d.cy) ** 2);
+    if (dist <= d.r && dist < bestDist) { hit = d; bestDist = dist; }
+  }
+
+  if (!hit) {
+    tooltip.style.display = 'none';
+    canvas.style.cursor = 'default';
+    return;
+  }
+
+  canvas.style.cursor = 'pointer';
+  const e    = hit.entry;
+  const task = _graphState.tasks[e.task_key];
+  const statusColor = { success: '#2ecc71', failure: '#e74c3c', timeout: '#f39c12' }[e.status] || '#6b6b80';
+
+  const ts  = new Date(e.ts).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
+  const dur = typeof e.duration_s === 'number' ? e.duration_s.toFixed(2) + 's' : '—';
+  const detail = e.stderr || e.stdout || e.detail || '';
+
+  tooltip.innerHTML = `
+    <div style="font-weight:600;margin-bottom:5px;color:var(--text)">${esc(task?.name || e.task_key)}</div>
+    <div style="color:var(--muted);font-size:10px;margin-bottom:7px">${esc(e.task_key)}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+      <span style="color:${statusColor};font-weight:600">${esc(e.status)}</span>
+      <span style="color:var(--muted)">·</span>
+      <span style="color:var(--muted)">${esc(dur)}</span>
+      ${e.forced ? '<span style="color:var(--accent);font-size:10px">forced</span>' : ''}
+    </div>
+    <div style="color:var(--muted2);font-size:10px;margin-bottom:${detail ? 6 : 0}px">${esc(ts)}</div>
+    ${detail ? `<div style="color:var(--muted);font-size:10px;border-top:1px solid var(--border);padding-top:5px;margin-top:3px;word-break:break-all;max-width:260px">${esc(detail.slice(0, 180))}${detail.length > 180 ? '…' : ''}</div>` : ''}
+  `;
+
+  // Position: prefer right of cursor, flip left if near edge
+  const vw = window.innerWidth;
+  const ttW = 240;
+  let left = ev.clientX + 14;
+  if (left + ttW > vw - 10) left = ev.clientX - ttW - 10;
+  tooltip.style.display = 'block';
+  tooltip.style.left    = left + 'px';
+  tooltip.style.top     = (ev.clientY - 10) + 'px';
+}
+
+// Re-render graph on window resize (debounced)
+window.addEventListener('resize', debounce(() => {
+  if (_graphState.view === 'graph' && _graphState.entries.length) _renderGraph();
+}, 250));
+
 </script>
 </body>
 </html>
