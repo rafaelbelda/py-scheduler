@@ -796,8 +796,11 @@ function startPolling() {
 const LIVE_TAIL_THRESHOLD_MS = 5 * 60 * 1000;
 
 function _graphIsLive() {
-  if (!_graphState.viewToMs) return false;
-  return (Date.now() - _graphState.viewToMs) < LIVE_TAIL_THRESHOLD_MS;
+  // Live when viewport's right edge is close to the current fetched boundary.
+  // Using toMs (not Date.now()) so zooming out past now doesn't break it.
+  if (!_graphState.viewToMs || !_graphState.toMs) return false;
+  const distFromEdge = _graphState.toMs - _graphState.viewToMs;
+  return distFromEdge < LIVE_TAIL_THRESHOLD_MS;
 }
 
 function _updateLiveBadge() {
@@ -812,67 +815,52 @@ async function pollData() {
   const id = active.id;
 
   if (id === 'tab-overview') {
-    await loadOverview();
-    // Also live-tail the graph if it has data and viewport is near now —
-    // even though the graph panel isn't visible in the table view, keep
-    // data fresh so switching to graph view shows current state instantly.
+    // Run table refresh and graph live-tick concurrently but independently
+    const jobs = [loadOverview()];
     if (_graphState.entries.length && _graphIsLive()) {
-      await _graphLiveTick();
+      jobs.push(_graphLiveTick());
     }
+    await Promise.allSettled(jobs);
   } else if (id === 'tab-tasks') {
     await loadTasks();
   } else if (id === 'tab-strikes') {
     await loadStrikes();
   }
   // logs tab is query-driven; don't auto-refresh
-
-  // If currently on graph view, do the live tick directly
-  if (id === 'tab-overview' && _graphState.view === 'graph' && _graphState.entries.length) {
-    _updateLiveBadge();
-  }
 }
 
 async function _graphLiveTick() {
-  const now    = Date.now();
+  const now = Date.now();
 
-  // Slide the FETCHED range forward to now, keeping its span.
-  const fetchSpan = _graphState.toMs - _graphState.fromMs;
-  const newTo     = now;
-  const newFrom   = now - fetchSpan;
+  // Extend the fetched range's right edge to now.
+  // Left edge stays fixed — we never drop old data during a live session.
+  // The viewport is NEVER touched here — the user's zoom is sacred.
+  const newTo = now;
 
-  // Preserve the user's viewport zoom/position — only shift it forward
-  // by how much time has passed since the last tick, not reset it.
-  const viewSpan    = _graphState.viewToMs - _graphState.viewFromMs;
-  const elapsed     = now - _graphState.toMs;  // time since last fetch
-  const newViewFrom = _graphState.viewFromMs + elapsed;
-  const newViewTo   = _graphState.viewToMs   + elapsed;
-
-  // Update inputs to reflect the new fetched range
-  const fmt = d => new Date(d).toISOString().slice(0, 16);
-  document.getElementById('graph-from').value = fmt(newFrom);
-  document.getElementById('graph-to').value   = fmt(newTo);
-
-  // Fetch silently — no loading spinner on live refresh
   try {
-    const startStr = new Date(newFrom).toISOString().slice(0, 10);
+    // Only fetch the new slice (from last known toMs to now) to minimise data
+    // transfer, but fall back to the full range so entries stay consistent.
+    const startStr = new Date(_graphState.fromMs).toISOString().slice(0, 10);
     const endStr   = new Date(newTo).toISOString().slice(0, 10);
     const data     = await api(`/logs/range/query?start=${startStr}&end=${endStr}`);
+
     const all = (data?.entries || []).filter(e => {
       const t = new Date(e.ts).getTime();
-      return t >= newFrom && t <= newTo;
+      return t >= _graphState.fromMs && t <= newTo;
     });
-    _graphState.fromMs    = newFrom;
-    _graphState.toMs      = newTo;
-    _graphState.entries   = all;
-    _graphState.tasks     = state.tasks;
 
-    // Advance viewport by elapsed time — zoom level unchanged
-    _graphState.viewFromMs = newViewFrom;
-    _graphState.viewToMs   = newViewTo;
+    _graphState.toMs    = newTo;
+    _graphState.entries = all;
+    _graphState.tasks   = state.tasks;
+    // viewFromMs / viewToMs deliberately untouched
+
+    // Update the 'to' input to reflect reality without resetting 'from'
+    document.getElementById('graph-to').value =
+      new Date(newTo).toISOString().slice(0, 16);
 
     if (_graphState.view === 'graph') {
-      _showGraphState(all.length ? 'canvas' : 'empty');
-      if (all.length) _renderGraph();
+      _showGraphState('canvas');
+      _renderGraph();
     }
   } catch (e) {
     console.warn('graph live tick failed:', e);
@@ -1591,10 +1579,11 @@ function setOverviewView(view, btn) {
   document.getElementById('task-graph-wrap').style.display   = view === 'graph' ? '' : 'none';
   if (view === 'graph') {
     if (!_graphState.entries.length) {
-      // No data yet — fetch the default 12h window
-      loadGraph();
+      // No data yet — fetch without resetting any existing viewport state
+      loadGraph(true);
     } else {
       _renderGraph();
+      _updateLiveBadge();
     }
   }
 }
@@ -1609,7 +1598,7 @@ function setGraphPreset(hours) {
   loadGraph();
 }
 
-async function loadGraph() {
+async function loadGraph(resetViewport = true) {
   const fromVal = document.getElementById('graph-from').value;
   const toVal   = document.getElementById('graph-to').value;
   if (!fromVal || !toVal) return;
@@ -1629,10 +1618,16 @@ async function loadGraph() {
       const t = new Date(e.ts).getTime();
       return t >= _graphState.fromMs && t <= _graphState.toMs;
     });
-    _graphState.entries   = all;
-    _graphState.tasks     = state.tasks;
-    _graphState.viewFromMs = _graphState.fromMs;
-    _graphState.viewToMs   = _graphState.toMs;
+    _graphState.entries = all;
+    _graphState.tasks   = state.tasks;
+
+    // Only reset the viewport on an explicit user action (preset / load btn).
+    // When called silently (e.g. first open) preserve existing zoom if any.
+    if (resetViewport || !_graphState.viewToMs) {
+      _graphState.viewFromMs = _graphState.fromMs;
+      _graphState.viewToMs   = _graphState.toMs;
+    }
+
     if (!all.length) { _showGraphState('empty'); _updateLiveBadge(); return; }
     _showGraphState('canvas');
     _renderGraph();
@@ -1822,28 +1817,25 @@ function _renderGraph() {
 
   ctx.restore();
 
-  // ── "Out of range" hint ───────────────────────────────────────────────────
-  // If viewport extends beyond fetched range, shade the out-of-range area
-  if (viewFrom < _graphState.fromMs || viewTo > _graphState.toMs) {
-    ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    if (viewFrom < _graphState.fromMs) {
-      const x1 = LABEL_W;
-      const x2 = Math.min(xForTime(_graphState.fromMs), cssW);
-      if (x2 > x1) ctx.fillRect(x1, PAD_TOP, x2-x1, cssH - PAD_TOP);
+  // ── "Before fetch range" hint ────────────────────────────────────────────
+  // Shade only the LEFT side if viewport goes before the fetched start.
+  // Never shade the right — in live mode toMs trails behind now by design.
+  if (viewFrom < _graphState.fromMs) {
+    const x1 = LABEL_W;
+    const x2 = Math.min(xForTime(_graphState.fromMs), cssW);
+    if (x2 > x1) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(x1, PAD_TOP, x2 - x1, cssH - PAD_TOP);
+      const cx = (x1 + x2) / 2;
+      if (x2 - x1 > 60) {
+        ctx.fillStyle = C.muted2;
+        ctx.textAlign = 'center';
+        ctx.font = '10px JetBrains Mono, Consolas, monospace';
+        ctx.fillText('no data fetched', cx, cssH / 2);
+      }
+      ctx.restore();
     }
-    if (viewTo > _graphState.toMs) {
-      const x1 = Math.max(xForTime(_graphState.toMs), LABEL_W);
-      const x2 = cssW;
-      if (x2 > x1) ctx.fillRect(x1, PAD_TOP, x2-x1, cssH - PAD_TOP);
-    }
-    // "no data" label in shaded area
-    ctx.fillStyle = C.muted2; ctx.textAlign = 'center'; ctx.font = '10px JetBrains Mono, Consolas, monospace';
-    if (viewTo > _graphState.toMs) {
-      const cx = (Math.max(xForTime(_graphState.toMs), LABEL_W) + cssW) / 2;
-      if (cx > LABEL_W + 30) ctx.fillText('no data fetched', cx, cssH / 2);
-    }
-    ctx.restore();
   }
 
   // ── Hover + scroll ───────────────────────────────────────────────────────
