@@ -301,8 +301,11 @@
 
   /* ── Empty / loading ── */
   .empty {
-    padding: 48px; text-align: center; color: var(--muted); font-size: 12px;
+    padding: 40px 24px; text-align: center; color: var(--muted); font-size: 12px;
+    line-height: 1.6;
   }
+  /* table cells hosting an empty state: kill cell padding so .empty controls spacing */
+  td > .empty, td.empty { padding: 40px 24px; }
   .spinner {
     width: 20px; height: 20px; border: 2px solid var(--border2);
     border-top-color: var(--accent); border-radius: 50%;
@@ -579,7 +582,7 @@
     </div>
     <div id="log-count" style="font-size:11px;color:var(--muted);margin-bottom:10px;"></div>
     <div class="log-table-wrap" id="logs-container">
-      <div class="empty">Select a date range and click load</div>
+      <div class="empty" style="opacity:.6">Select a date range and click load</div>
     </div>
   </div>
 
@@ -1083,9 +1086,7 @@ async function loadOverview() {
 
     if (!issues.length) {
       countEl.textContent = '';
-      issuesWrap.innerHTML = `<div class="empty" style="color:var(--green);opacity:.7">
-        ✓ no failures in the last 24h
-      </div>`;
+      issuesWrap.innerHTML = '<div class="empty" style="color:var(--green);opacity:.8">✓ no failures in the last 24h</div>';
     } else {
       countEl.textContent = `(${issues.length})`;
       renderLogList(issues, issuesWrap, false);

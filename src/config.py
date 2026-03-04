@@ -60,18 +60,7 @@ def _defaults() -> dict:
             "strike_reset_hours": 24,  # hours of silence before auto-reset
             "global_cap": 100      # total scheduler notifications before global mute
         },
-        "tasks": {
-            "example": {
-                "name": "Example Task",
-                "enabled": False,
-                "script": "tasks/example.py",
-                "frequency": "daily",
-                "times": ["09:00"],
-                "timeout": 60,
-                "notify_on_success": False,
-                "notify_on_failure": True
-            }
-        }
+        "tasks": {}  # no default tasks — define yours in config.json
     }
 
 # ---------------------------------------------------------------------------
