@@ -5,7 +5,7 @@ A lightweight Python task scheduler with a optional web dashboard and REST API.
 Write tasks as plain Python scripts. The scheduler runs them on your defined schedule.
 No cron syntax, no external services, no dependencies beyond the standard library (plus FastAPI/uvicorn if you want the API and dashboard).
 
-A special thanks to Sonnet 4.6 for most of this.
+A special thanks to Sonnet 4.6 for most of thi... What? You thought I would code 100% of my own scheduler?
 
 ## Features
 
