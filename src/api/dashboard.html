@@ -208,6 +208,7 @@
   }
   .action-btn:hover { background: var(--border2); border-color: var(--accent); }
   .action-btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .action-btn.danger.armed { border-color: rgba(231,76,60,.5); color: var(--red); }
   .action-btn.run-btn:hover { border-color: var(--green); color: var(--green); }
 
   .btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
@@ -447,6 +448,7 @@
         <span id="sched-label">connecting</span>
       </div>
       <span class="uptime-badge" id="uptime-badge"></span>
+      <button class="action-btn danger" id="stop-btn" onclick="stopScheduler()" style="display:none">■ stop</button>
       <button class="action-btn" onclick="logout()">logout</button>
     </div>
   </header>
@@ -822,10 +824,15 @@ async function pollStatus() {
     const s = await api('/status');
     if (!s) return;
 
-    const dot = document.getElementById('sched-dot');
-    const lbl = document.getElementById('sched-label');
-    dot.className = 'dot ' + (s.scheduler_running ? 'green' : '');
+    const dot  = document.getElementById('sched-dot');
+    const lbl  = document.getElementById('sched-label');
+    const sBtn = document.getElementById('stop-btn');
+    dot.className  = 'dot ' + (s.scheduler_running ? 'green' : '');
     lbl.textContent = s.scheduler_running ? 'running' : 'stopped';
+
+    // Show stop button only when running; give it an "armed" tint
+    sBtn.style.display = s.scheduler_running ? '' : 'none';
+    sBtn.classList.toggle('armed', s.scheduler_running);
 
     const h = Math.floor(s.uptime_seconds / 3600);
     const m = Math.floor((s.uptime_seconds % 3600) / 60);
@@ -837,7 +844,56 @@ async function pollStatus() {
   } catch {
     document.getElementById('sched-dot').className = 'dot';
     document.getElementById('sched-label').textContent = 'unreachable';
+    document.getElementById('stop-btn').style.display = 'none';
   }
+}
+
+async function stopScheduler() {
+  const confirmed = confirm(
+    'Stop py-scheduler?\n\n' +
+    'The process will exit. If systemd is configured with Restart=always ' +
+    'or Restart=on-failure it will restart automatically.\n\n' +
+    'The dashboard will reconnect once the service is back up.'
+  );
+  if (!confirmed) return;
+
+  const btn = document.getElementById('stop-btn');
+  btn.textContent = 'stopping…';
+  btn.disabled = true;
+
+  try {
+    // Fire and forget — process dies ~300ms after response, so we may not
+    // even get the response back. Both outcomes are fine.
+    await api('/scheduler/stop', { method: 'POST' }).catch(() => {});
+  } catch (_) {}
+
+  // Update UI immediately and start polling for reconnect
+  document.getElementById('sched-dot').className = 'dot';
+  document.getElementById('sched-label').textContent = 'restarting…';
+  btn.style.display = 'none';
+  btn.disabled = false;
+  btn.textContent = '■ stop';
+  toast('Process stopping — waiting for restart…', 'ok');
+
+  // Poll until the service comes back (up to 60s)
+  let attempts = 0;
+  const reconnect = setInterval(async () => {
+    attempts++;
+    try {
+      const s = await api('/status');
+      if (s?.scheduler_running) {
+        clearInterval(reconnect);
+        toast('Scheduler restarted ✓', 'ok');
+        await pollStatus();
+        await loadOverview();
+      }
+    } catch (_) {}
+    if (attempts >= 60) {
+      clearInterval(reconnect);
+      document.getElementById('sched-label').textContent = 'unreachable';
+      toast('Service did not restart within 60s', 'err');
+    }
+  }, 1000);
 }
 
 // =============================================================================
@@ -1435,12 +1491,15 @@ function debounce(fn, ms) {
 // =============================================================================
 
 const _graphState = {
-  view: 'table',   // 'table' | 'graph'
-  preset: 12,      // active preset hours
-  entries: [],     // raw log entries for current range
-  tasks: {},       // task key → task def (from state.tasks)
-  fromMs: 0,
-  toMs: 0,
+  view: 'table',      // 'table' | 'graph'
+  preset: 12,         // active preset hours
+  entries: [],        // raw log entries for the FETCHED range
+  tasks: {},          // task key → task def (from state.tasks)
+  fromMs: 0,          // fetched range start
+  toMs: 0,            // fetched range end
+  viewFromMs: 0,      // current viewport start (zoom/pan)
+  viewToMs: 0,        // current viewport end
+  dots: [],           // hit targets for hover
 };
 
 function setOverviewView(view, btn) {
@@ -1489,8 +1548,10 @@ async function loadGraph() {
       const t = new Date(e.ts).getTime();
       return t >= _graphState.fromMs && t <= _graphState.toMs;
     });
-    _graphState.entries = all;
-    _graphState.tasks   = state.tasks;
+    _graphState.entries   = all;
+    _graphState.tasks     = state.tasks;
+    _graphState.viewFromMs = _graphState.fromMs;
+    _graphState.viewToMs   = _graphState.toMs;
     if (!all.length) { _showGraphState('empty'); return; }
     _showGraphState('canvas');
     _renderGraph();
@@ -1512,213 +1573,259 @@ function _renderGraph() {
   const entries = _graphState.entries;
   const tasks   = _graphState.tasks;
 
-  // ── Layout constants ──────────────────────────────────────────────────────
-  const LABEL_W  = 160;   // left gutter for task labels
-  const ROW_H    = 38;    // height per task row
-  const DOT_R    = 5;     // base dot radius
-  const PAD_TOP  = 36;    // space for x-axis labels at top
-  const PAD_BOT  = 8;
-  const MIN_W    = 600;
+  // ── DPR-aware sizing ─────────────────────────────────────────────────────
+  const DPR      = window.devicePixelRatio || 1;
+  const LABEL_W  = 164;
+  const ROW_H    = 40;
+  const DOT_R    = 5;
+  const PAD_TOP  = 38;
+  const PAD_BOT  = 10;
+  const PAD_R    = 12;
 
-  // Collect unique task keys in order (tasks from config first, then any orphan log keys)
   const configKeys = Object.keys(tasks);
   const logKeys    = [...new Set(entries.map(e => e.task_key))];
   const allKeys    = [...configKeys, ...logKeys.filter(k => !configKeys.includes(k))];
-  // Only keep tasks that have entries in range OR are in config
   const rowKeys    = allKeys.filter(k => configKeys.includes(k) || logKeys.includes(k));
 
-  const numRows  = rowKeys.length;
-  const H        = PAD_TOP + numRows * ROW_H + PAD_BOT;
-  const W        = Math.max(wrap.clientWidth || MIN_W, MIN_W);
-  const PLOT_W   = W - LABEL_W - 16;
+  const numRows = rowKeys.length;
+  const cssW    = Math.max((wrap.clientWidth || 700) - 2, 400);
+  const cssH    = PAD_TOP + numRows * ROW_H + PAD_BOT;
+  const PLOT_W  = cssW - LABEL_W - PAD_R;
 
-  canvas.width  = W;
-  canvas.height = H;
-  canvas.style.width  = W + 'px';
-  canvas.style.height = H + 'px';
+  // Set CSS size first, then physical size for DPR
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  canvas.width  = Math.round(cssW * DPR);
+  canvas.height = Math.round(cssH * DPR);
 
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
+  ctx.scale(DPR, DPR);
 
-  // ── Colours ───────────────────────────────────────────────────────────────
-  const C = {
-    bg2:     '#111113',
-    bg3:     '#18181c',
-    border:  '#222228',
-    border2: '#2e2e38',
-    text:    '#e8e8f0',
-    muted:   '#6b6b80',
-    muted2:  '#44444f',
-    green:   '#2ecc71',
-    red:     '#e74c3c',
-    orange:  '#f39c12',
-    accent:  '#ff676f',
-  };
-
-  // ── Background ────────────────────────────────────────────────────────────
-  ctx.fillStyle = C.bg2;
-  ctx.fillRect(0, 0, W, H);
-
-  // Label gutter background
-  ctx.fillStyle = C.bg3;
-  ctx.fillRect(0, 0, LABEL_W, H);
-
-  // Separator line
-  ctx.strokeStyle = C.border2;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(LABEL_W, 0);
-  ctx.lineTo(LABEL_W, H);
-  ctx.stroke();
-
-  // ── Time axis ─────────────────────────────────────────────────────────────
-  const fromMs = _graphState.fromMs;
-  const toMs   = _graphState.toMs;
-  const spanMs = toMs - fromMs;
+  // Viewport — use viewFromMs/viewToMs for what we draw
+  const viewFrom = _graphState.viewFromMs || _graphState.fromMs;
+  const viewTo   = _graphState.viewToMs   || _graphState.toMs;
+  const spanMs   = viewTo - viewFrom;
 
   function xForTime(ms) {
-    return LABEL_W + ((ms - fromMs) / spanMs) * PLOT_W;
+    return LABEL_W + ((ms - viewFrom) / spanMs) * PLOT_W;
   }
 
-  // Compute nice tick interval
+  // ── Colours ──────────────────────────────────────────────────────────────
+  const C = {
+    bg2:'#111113', bg3:'#18181c', border:'#222228', border2:'#2e2e38',
+    text:'#e8e8f0', muted:'#6b6b80', muted2:'#44444f',
+    green:'#2ecc71', red:'#e74c3c', orange:'#f39c12',
+  };
+
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  // Backgrounds
+  ctx.fillStyle = C.bg2; ctx.fillRect(0, 0, cssW, cssH);
+  ctx.fillStyle = C.bg3; ctx.fillRect(0, 0, LABEL_W, cssH);
+  ctx.strokeStyle = C.border2; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(LABEL_W, 0); ctx.lineTo(LABEL_W, cssH); ctx.stroke();
+
+  // ── X-axis ticks ─────────────────────────────────────────────────────────
   const spanH = spanMs / 3600000;
-  let tickIntervalMs, tickFmt;
-  if (spanH <= 6)        { tickIntervalMs = 30 * 60000;   tickFmt = 'HH:MM'; }
-  else if (spanH <= 24)  { tickIntervalMs = 2 * 3600000;  tickFmt = 'HH:MM'; }
-  else if (spanH <= 72)  { tickIntervalMs = 12 * 3600000; tickFmt = 'Mon DD HH:MM'; }
-  else                   { tickIntervalMs = 24 * 3600000; tickFmt = 'Mon DD'; }
+  let tickMs, tickFmt;
+  if      (spanH <= 0.5)  { tickMs = 5*60000;      tickFmt = 'HH:MM'; }
+  else if (spanH <= 2)    { tickMs = 15*60000;     tickFmt = 'HH:MM'; }
+  else if (spanH <= 6)    { tickMs = 30*60000;     tickFmt = 'HH:MM'; }
+  else if (spanH <= 24)   { tickMs = 2*3600000;    tickFmt = 'HH:MM'; }
+  else if (spanH <= 72)   { tickMs = 12*3600000;   tickFmt = 'D HH:MM'; }
+  else                    { tickMs = 24*3600000;   tickFmt = 'D'; }
 
-  // Snap first tick to a clean boundary
-  const firstTick = Math.ceil(fromMs / tickIntervalMs) * tickIntervalMs;
-
+  const firstTick = Math.ceil(viewFrom / tickMs) * tickMs;
   ctx.font = '10px JetBrains Mono, Cascadia Code, Consolas, monospace';
-  ctx.fillStyle = C.muted;
   ctx.textAlign = 'center';
 
-  for (let t = firstTick; t <= toMs; t += tickIntervalMs) {
+  for (let t = firstTick; t <= viewTo; t += tickMs) {
     const x = xForTime(t);
+    if (x < LABEL_W || x > cssW) continue;
     const d = new Date(t);
     let label;
     if (tickFmt === 'HH:MM') {
       label = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-    } else if (tickFmt === 'Mon DD HH:MM') {
+    } else if (tickFmt === 'D HH:MM') {
       label = d.toLocaleDateString('en-GB',{month:'short',day:'numeric'}) + ' ' +
               d.getHours().toString().padStart(2,'0') + ':00';
     } else {
-      label = d.toLocaleDateString('en-GB', {month:'short', day:'numeric'});
+      label = d.toLocaleDateString('en-GB',{month:'short',day:'numeric'});
     }
 
-    // Tick line
-    ctx.strokeStyle = C.border;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, PAD_TOP - 6);
-    ctx.lineTo(x, H - PAD_BOT);
-    ctx.stroke();
+    // Grid line
+    ctx.strokeStyle = C.border; ctx.lineWidth = 1;
+    ctx.setLineDash([2,4]);
+    ctx.beginPath(); ctx.moveTo(x, PAD_TOP - 4); ctx.lineTo(x, cssH - PAD_BOT); ctx.stroke();
     ctx.setLineDash([]);
 
     // Label
     ctx.fillStyle = C.muted;
-    ctx.fillText(label, x, PAD_TOP - 10);
+    ctx.fillText(label, x, PAD_TOP - 12);
+    // Small tick mark
+    ctx.strokeStyle = C.border2; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, PAD_TOP - 6); ctx.lineTo(x, PAD_TOP - 2); ctx.stroke();
   }
 
-  // ── Row backgrounds + labels ──────────────────────────────────────────────
+  // ── Rows ─────────────────────────────────────────────────────────────────
   ctx.textAlign = 'right';
   rowKeys.forEach((key, i) => {
     const y = PAD_TOP + i * ROW_H;
-    const isEven = i % 2 === 0;
 
-    // Alternating row bg
-    if (isEven) {
-      ctx.fillStyle = 'rgba(255,255,255,0.015)';
-      ctx.fillRect(0, y, W, ROW_H);
+    if (i % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.018)';
+      ctx.fillRect(0, y, cssW, ROW_H);
     }
+    ctx.strokeStyle = C.border; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y + ROW_H); ctx.lineTo(cssW, y + ROW_H); ctx.stroke();
 
-    // Row separator
-    ctx.strokeStyle = C.border;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, y + ROW_H);
-    ctx.lineTo(W, y + ROW_H);
-    ctx.stroke();
-
-    // Task name
-    const task = tasks[key];
-    const name = task?.name || key;
+    const task    = tasks[key];
     const enabled = task?.enabled !== false;
+    const name    = task?.name || key;
+
+    // Label — two-line: name + key
     ctx.font = `500 11px JetBrains Mono, Cascadia Code, Consolas, monospace`;
     ctx.fillStyle = enabled ? C.text : C.muted2;
-    // Truncate label if needed
     let label = name;
-    while (ctx.measureText(label).width > LABEL_W - 16 && label.length > 4) {
+    while (ctx.measureText(label).width > LABEL_W - 14 && label.length > 3)
       label = label.slice(0, -1);
-    }
     if (label !== name) label = label.slice(0, -1) + '…';
-    ctx.fillText(label, LABEL_W - 8, y + ROW_H / 2 + 4);
+    ctx.fillText(label, LABEL_W - 8, y + ROW_H / 2 + (key !== name ? 1 : 4));
+
+    if (key !== name) {
+      ctx.font = '9px JetBrains Mono, Cascadia Code, Consolas, monospace';
+      ctx.fillStyle = C.muted2;
+      let klabel = key;
+      while (ctx.measureText(klabel).width > LABEL_W - 14 && klabel.length > 3)
+        klabel = klabel.slice(0, -1);
+      if (klabel !== key) klabel = klabel.slice(0, -1) + '…';
+      ctx.fillText(klabel, LABEL_W - 8, y + ROW_H / 2 + 12);
+    }
   });
 
   // ── Dots ─────────────────────────────────────────────────────────────────
-  const DOT_COLORS = { success: C.green, failure: C.red, timeout: C.orange };
-  const GLOW_COLORS = {
-    success: 'rgba(46,204,113,0.3)',
-    failure: 'rgba(231,76,60,0.3)',
-    timeout: 'rgba(243,156,18,0.3)',
-  };
+  const DOT_FILL  = { success: C.green,  failure: C.red,    timeout: C.orange };
+  const DOT_GLOW  = { success: null, failure:'rgba(231,76,60,0.28)', timeout:'rgba(243,156,18,0.28)' };
 
-  // Store dot hit areas for hover
   _graphState.dots = [];
+
+  // Clip drawing to plot area
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(LABEL_W, PAD_TOP - DOT_R - 4, PLOT_W + PAD_R, cssH - PAD_TOP + DOT_R + 4);
+  ctx.clip();
 
   entries.forEach(e => {
     const rowIdx = rowKeys.indexOf(e.task_key);
     if (rowIdx === -1) return;
     const ms = new Date(e.ts).getTime();
-    if (ms < fromMs || ms > toMs) return;
 
-    const x   = xForTime(ms);
-    const cy  = PAD_TOP + rowIdx * ROW_H + ROW_H / 2;
-    const col = DOT_COLORS[e.status] || C.muted;
-    const glow = GLOW_COLORS[e.status];
+    const x  = xForTime(ms);
+    const cy = PAD_TOP + rowIdx * ROW_H + ROW_H / 2;
+    const col  = DOT_FILL[e.status]  || C.muted2;
+    const glow = DOT_GLOW[e.status];
 
-    // Outer glow for failures/timeouts
-    if (e.status === 'failure' || e.status === 'timeout') {
-      ctx.beginPath();
-      ctx.arc(x, cy, DOT_R + 3, 0, Math.PI * 2);
-      ctx.fillStyle = glow;
-      ctx.fill();
+    if (glow) {
+      ctx.beginPath(); ctx.arc(x, cy, DOT_R + 4, 0, Math.PI*2);
+      ctx.fillStyle = glow; ctx.fill();
     }
+    ctx.beginPath(); ctx.arc(x, cy, DOT_R, 0, Math.PI*2);
+    ctx.fillStyle = col; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, cy, DOT_R, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1; ctx.stroke();
 
-    // Dot
-    ctx.beginPath();
-    ctx.arc(x, cy, DOT_R, 0, Math.PI * 2);
-    ctx.fillStyle = col;
-    ctx.fill();
-
-    // White border for contrast
-    ctx.beginPath();
-    ctx.arc(x, cy, DOT_R, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    _graphState.dots.push({ x, cy, r: DOT_R + 4, entry: e, rowIdx });
+    // CSS-space coords for hit detection (no DPR factor — mouse events are CSS)
+    _graphState.dots.push({ x, cy, r: DOT_R + 5, entry: e });
   });
 
-  // ── Attach hover ──────────────────────────────────────────────────────────
-  canvas.onmousemove = (ev) => _graphHover(ev, canvas);
+  ctx.restore();
+
+  // ── "Out of range" hint ───────────────────────────────────────────────────
+  // If viewport extends beyond fetched range, shade the out-of-range area
+  if (viewFrom < _graphState.fromMs || viewTo > _graphState.toMs) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    if (viewFrom < _graphState.fromMs) {
+      const x1 = LABEL_W;
+      const x2 = Math.min(xForTime(_graphState.fromMs), cssW);
+      if (x2 > x1) ctx.fillRect(x1, PAD_TOP, x2-x1, cssH - PAD_TOP);
+    }
+    if (viewTo > _graphState.toMs) {
+      const x1 = Math.max(xForTime(_graphState.toMs), LABEL_W);
+      const x2 = cssW;
+      if (x2 > x1) ctx.fillRect(x1, PAD_TOP, x2-x1, cssH - PAD_TOP);
+    }
+    // "no data" label in shaded area
+    ctx.fillStyle = C.muted2; ctx.textAlign = 'center'; ctx.font = '10px JetBrains Mono, Consolas, monospace';
+    if (viewTo > _graphState.toMs) {
+      const cx = (Math.max(xForTime(_graphState.toMs), LABEL_W) + cssW) / 2;
+      if (cx > LABEL_W + 30) ctx.fillText('no data fetched', cx, cssH / 2);
+    }
+    ctx.restore();
+  }
+
+  // ── Hover + scroll ───────────────────────────────────────────────────────
+  canvas.onmousemove  = (ev) => _graphHover(ev, canvas);
   canvas.onmouseleave = () => {
     document.getElementById('graph-tooltip').style.display = 'none';
     canvas.style.cursor = 'default';
   };
+
+  // Attach wheel once (remove old handler first)
+  canvas.onwheel = (ev) => {
+    ev.preventDefault();
+    _graphZoom(ev, canvas);
+  };
+}
+
+function _graphZoom(ev, canvas) {
+  const rect     = canvas.getBoundingClientRect();
+  const cssX     = ev.clientX - rect.left;
+  const LABEL_W  = 164;
+  const PAD_R    = 12;
+  const PLOT_W   = rect.width - LABEL_W - PAD_R;
+
+  if (cssX < LABEL_W) return; // ignore zoom in label gutter
+
+  // Fraction of plot area where cursor is
+  const frac = (cssX - LABEL_W) / PLOT_W;
+
+  const curFrom  = _graphState.viewFromMs;
+  const curTo    = _graphState.viewToMs;
+  const curSpan  = curTo - curFrom;
+
+  // pinned time under cursor
+  const pivotMs  = curFrom + frac * curSpan;
+
+  // zoom factor: scroll down = zoom out (bigger span), scroll up = zoom in
+  const ZOOM_FACTOR = 0.15;
+  const direction   = ev.deltaY > 0 ? 1 : -1; // 1 = zoom out, -1 = zoom in
+  const delta       = curSpan * ZOOM_FACTOR * direction;
+
+  let newSpan = curSpan + delta;
+  // Clamp: min 5 minutes, max 30 days
+  newSpan = Math.max(5 * 60000, Math.min(30 * 24 * 3600000, newSpan));
+
+  // Keep pivot point fixed under cursor
+  const newFrom = pivotMs - frac * newSpan;
+  const newTo   = newFrom + newSpan;
+
+  _graphState.viewFromMs = newFrom;
+  _graphState.viewToMs   = newTo;
+
+  // Update datetime inputs to reflect viewport
+  const fmt = d => new Date(d).toISOString().slice(0,16);
+  document.getElementById('graph-from').value = fmt(newFrom);
+  document.getElementById('graph-to').value   = fmt(newTo);
+
+  _renderGraph();
 }
 
 function _graphHover(ev, canvas) {
-  const rect   = canvas.getBoundingClientRect();
-  // Scale for devicePixelRatio if needed (canvas is 1:1 here but be safe)
-  const scaleX = canvas.width  / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const mx = (ev.clientX - rect.left) * scaleX;
-  const my = (ev.clientY - rect.top)  * scaleY;
+  const rect = canvas.getBoundingClientRect();
+  // Use CSS coords directly — dots stored in CSS space (no DPR factor)
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
 
   const tooltip = document.getElementById('graph-tooltip');
   const dots    = _graphState.dots || [];

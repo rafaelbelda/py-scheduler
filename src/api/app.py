@@ -74,6 +74,20 @@ def create_app(scheduler: Scheduler, project_root: Path) -> FastAPI:
         tasks = sched.get_tasks()
         return JSONResponse(content={"success": True, "task_count": len(tasks)})
 
+    @app.post("/scheduler/stop", tags=["system"], dependencies=[Depends(require_token)])
+    def stop_scheduler(request: Request) -> JSONResponse:
+        """Kill the process. Systemd (Restart=always/on-failure) will restart it.
+
+        Sends SIGTERM to self on a short delay so the HTTP response is
+        delivered before the process exits.
+        """
+        import os, signal, threading  # noqa: PLC0415
+        def _kill():
+            import time; time.sleep(0.3)
+            os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=_kill, daemon=True).start()
+        return JSONResponse(content={"success": True})
+
     @app.get("/status", tags=["system"], dependencies=[Depends(require_token)])
     def get_status(request: Request) -> JSONResponse:
         sched: Scheduler = request.app.state.scheduler
