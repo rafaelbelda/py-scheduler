@@ -1509,9 +1509,9 @@ function setOverviewView(view, btn) {
   document.getElementById('task-status-wrap').style.display  = view === 'table' ? '' : 'none';
   document.getElementById('task-graph-wrap').style.display   = view === 'graph' ? '' : 'none';
   if (view === 'graph') {
-    // If graph hasn't been loaded yet, init with default 12h preset
-    if (!_graphState.entries.length && !document.getElementById('graph-from').value) {
-      setGraphPreset(12);
+    if (!_graphState.entries.length) {
+      // No data yet — fetch the default 12h window
+      loadGraph();
     } else {
       _renderGraph();
     }
