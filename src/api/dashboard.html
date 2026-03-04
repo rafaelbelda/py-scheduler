@@ -305,6 +305,7 @@
     animation: spin .7s linear infinite; display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 
   /* ── Modal ── */
   .modal-bg {
@@ -508,6 +509,10 @@
         <button class="action-btn graph-preset-btn" onclick="setGraphPreset(72)">3d</button>
         <button class="action-btn graph-preset-btn" onclick="setGraphPreset(168)">7d</button>
         <div style="margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--muted)">
+          <span id="graph-live-badge" style="display:none;align-items:center;gap:5px">
+            <span style="width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 5px var(--green);animation:pulse 2s infinite"></span>
+            <span style="color:var(--green)">live</span>
+          </span>
           <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0"></span>success</span>
           <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--red);display:inline-block;flex-shrink:0"></span>failure</span>
           <span style="display:flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:50%;background:var(--orange);display:inline-block;flex-shrink:0"></span>timeout</span>
@@ -787,15 +792,81 @@ function startPolling() {
   state.dataTimer = setInterval(pollData, 30000);
 }
 
+// How close to "now" the viewport end must be to trigger live-tail (5 min)
+const LIVE_TAIL_THRESHOLD_MS = 5 * 60 * 1000;
+
+function _graphIsLive() {
+  if (!_graphState.viewToMs) return false;
+  return (Date.now() - _graphState.viewToMs) < LIVE_TAIL_THRESHOLD_MS;
+}
+
+function _updateLiveBadge() {
+  const badge = document.getElementById('graph-live-badge');
+  if (!badge) return;
+  badge.style.display = _graphIsLive() ? 'flex' : 'none';
+}
+
 async function pollData() {
-  // Refresh data for whichever tab is currently visible
   const active = document.querySelector('.tab-content.active');
   if (!active) return;
   const id = active.id;
-  if (id === 'tab-overview') await loadOverview();
-  else if (id === 'tab-tasks') await loadTasks();
-  else if (id === 'tab-strikes') await loadStrikes();
+
+  if (id === 'tab-overview') {
+    await loadOverview();
+    // Also live-tail the graph if it has data and viewport is near now —
+    // even though the graph panel isn't visible in the table view, keep
+    // data fresh so switching to graph view shows current state instantly.
+    if (_graphState.entries.length && _graphIsLive()) {
+      await _graphLiveTick();
+    }
+  } else if (id === 'tab-tasks') {
+    await loadTasks();
+  } else if (id === 'tab-strikes') {
+    await loadStrikes();
+  }
   // logs tab is query-driven; don't auto-refresh
+
+  // If currently on graph view, do the live tick directly
+  if (id === 'tab-overview' && _graphState.view === 'graph' && _graphState.entries.length) {
+    _updateLiveBadge();
+  }
+}
+
+async function _graphLiveTick() {
+  // Slide both the fetched range and viewport forward to now,
+  // keeping the same span, then re-fetch.
+  const now     = Date.now();
+  const spanMs  = _graphState.toMs - _graphState.fromMs;
+  const newTo   = now;
+  const newFrom = now - spanMs;
+
+  // Update inputs
+  const fmt = d => new Date(d).toISOString().slice(0, 16);
+  document.getElementById('graph-from').value = fmt(newFrom);
+  document.getElementById('graph-to').value   = fmt(newTo);
+
+  // Fetch silently (no loading spinner — would be jarring on live refresh)
+  try {
+    const startStr = new Date(newFrom).toISOString().slice(0, 10);
+    const endStr   = new Date(newTo).toISOString().slice(0, 10);
+    const data     = await api(`/logs/range/query?start=${startStr}&end=${endStr}`);
+    const all = (data?.entries || []).filter(e => {
+      const t = new Date(e.ts).getTime();
+      return t >= newFrom && t <= newTo;
+    });
+    _graphState.fromMs    = newFrom;
+    _graphState.toMs      = newTo;
+    _graphState.viewFromMs = newFrom;
+    _graphState.viewToMs   = newTo;
+    _graphState.entries   = all;
+    _graphState.tasks     = state.tasks;
+    if (_graphState.view === 'graph') {
+      _showGraphState(all.length ? 'canvas' : 'empty');
+      if (all.length) _renderGraph();
+    }
+  } catch (e) {
+    console.warn('graph live tick failed:', e);
+  }
 }
 
 function stopPolling() {
@@ -1552,9 +1623,10 @@ async function loadGraph() {
     _graphState.tasks     = state.tasks;
     _graphState.viewFromMs = _graphState.fromMs;
     _graphState.viewToMs   = _graphState.toMs;
-    if (!all.length) { _showGraphState('empty'); return; }
+    if (!all.length) { _showGraphState('empty'); _updateLiveBadge(); return; }
     _showGraphState('canvas');
     _renderGraph();
+    _updateLiveBadge();
   } catch (e) {
     _showGraphState('empty');
     console.error('loadGraph:', e);
@@ -1819,6 +1891,7 @@ function _graphZoom(ev, canvas) {
   document.getElementById('graph-to').value   = fmt(newTo);
 
   _renderGraph();
+  _updateLiveBadge();
 }
 
 function _graphHover(ev, canvas) {
