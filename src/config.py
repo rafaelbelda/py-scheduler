@@ -41,8 +41,8 @@ def _defaults() -> dict:
         "app_logging_level": "INFO",
         "api": {
             "enabled": True,
-            "logging_level": "info",
             "disable_docs": False,
+            "logging_level": "info",
             "host": "0.0.0.0",
             "port": 8765,
             "token": "changeme"
