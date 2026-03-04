@@ -1402,7 +1402,12 @@ function renderLogList(entries, container, compact = false) {
   const rows = entries.map(e => {
     const tagCls  = { success: 'tag-success', failure: 'tag-failure', timeout: 'tag-timeout', skipped: 'tag-skipped' }[e.status] || 'tag-skipped';
     const dur     = typeof e.duration_s === 'number' ? e.duration_s.toFixed(2) + 's' : '—';
-    const detail  = e.detail || e.stderr || e.stdout || '';
+    // For the inline cell: show the most useful signal per status.
+    // success → stdout (what the task actually printed) | failure/timeout → stderr first (error info), then stdout. Fall back to detail ("exited N in Xs") only when nothing else exists
+    const _isErr  = e.status === 'failure' || e.status === 'timeout';
+    const detail  = _isErr
+      ? (e.stderr || e.stdout || e.detail || '')
+      : (e.stdout || e.detail || '');
     const forced  = e.forced ? '<span class="forced-tag">forced</span>' : '';
     return `<div class="log-entry">
       <div class="log-cell ts">${fmtTs(e.ts)}</div>

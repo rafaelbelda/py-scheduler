@@ -1,6 +1,6 @@
 # py-scheduler
 
-A lightweight Python task scheduler with a web dashboard and optional REST API.
+A lightweight Python task scheduler with a optional web dashboard and REST API.
 
 Write tasks as plain Python scripts. The scheduler runs them on your defined schedule.
 No cron syntax, no external services, no dependencies beyond the standard library (plus FastAPI/uvicorn if you want the API and dashboard).
@@ -15,7 +15,7 @@ A special thanks to Sonnet 4.6 for most of this.
 - **Structured JSONL logs** — one file per day, queryable by date range and task
 - **Automatic log pruning** — configurable retention period
 - **ntfy notifications** with per-task strike suppression — mutes a flapping task after N consecutive failures, auto-resets after a configurable silence window
-- **Web dashboard** — overview, task management, log viewer, strike inspector; accessible at `GET /`
+- **Web dashboard** — overview, task management, log viewer, strike inspector; accessible at `GET /`.
 - **REST API** — list, run, enable, disable, and edit tasks without touching config.json
 - **`once` frequency** — auto-disables a task after its first successful run
 - **Config hot-reload** — `POST /config/reload` picks up disk changes instantly
@@ -35,6 +35,10 @@ python main.py
 ```
 
 Open `http://localhost:8765` for the dashboard.
+
+> The dashboard requires a token but it is stored in **`sessionStorage`** (cleared when the browser tab is closed).
+
+The dashboard is meant to be accessible only through a secure network, please configure your firewall and bind address accordingly.
 
 To run without the API or dashboard:
 
@@ -269,6 +273,7 @@ To prevent a broken task from spamming your phone:
 - Each task has an independent failure counter (strikes)
 - At `strike_limit` (default 10), a final warning is sent and the task is silenced
 - Strikes reset automatically after `strike_reset_hours` (default 24h) of no failures
+- Tasks that are force-run do not generate strikes
 - Strikes do **not** reset on success — a task that alternates fail/success would otherwise never mute
 - A global cap across all tasks stops all scheduler notifications if something goes seriously wrong
 - Strike state is in-memory and resets on process restart — no task is permanently silenced
