@@ -771,9 +771,8 @@ async function init() {
   // Init graph default range (12h) — inputs populated but data not fetched until tab opens
   const _now12  = new Date();
   const _from12 = new Date(_now12 - 12 * 3600 * 1000);
-  const _fmt12  = d => d.toISOString().slice(0, 16);
-  document.getElementById('graph-from').value = _fmt12(_from12);
-  document.getElementById('graph-to').value   = _fmt12(_now12);
+  document.getElementById('graph-from').value = fmtLocal(_from12);
+  document.getElementById('graph-to').value   = fmtLocal(_now12);
 
   await Promise.all([loadOverview(), loadTasks()]);
   startPolling();
@@ -796,11 +795,10 @@ function startPolling() {
 const LIVE_TAIL_THRESHOLD_MS = 5 * 60 * 1000;
 
 function _graphIsLive() {
-  // Live when viewport's right edge is close to the current fetched boundary.
-  // Using toMs (not Date.now()) so zooming out past now doesn't break it.
-  if (!_graphState.viewToMs || !_graphState.toMs) return false;
-  const distFromEdge = _graphState.toMs - _graphState.viewToMs;
-  return distFromEdge < LIVE_TAIL_THRESHOLD_MS;
+  // Live when viewport's right edge is within threshold of actual now.
+  // This is the only correct check — viewport near now = user sees current data.
+  if (!_graphState.viewToMs) return false;
+  return (Date.now() - _graphState.viewToMs) < LIVE_TAIL_THRESHOLD_MS;
 }
 
 function _updateLiveBadge() {
@@ -849,18 +847,23 @@ async function _graphLiveTick() {
       return t >= _graphState.fromMs && t <= newTo;
     });
 
+    // Advance viewport by exactly how much the fetched window grew,
+    // preserving span (zoom level) and relative position exactly.
+    const elapsed      = newTo - _graphState.toMs;
     _graphState.toMs    = newTo;
     _graphState.entries = all;
     _graphState.tasks   = state.tasks;
-    // viewFromMs / viewToMs deliberately untouched
+    _graphState.viewFromMs += elapsed;
+    _graphState.viewToMs   += elapsed;
 
-    // Update the 'to' input to reflect reality without resetting 'from'
-    document.getElementById('graph-to').value =
-      new Date(newTo).toISOString().slice(0, 16);
+    // Keep inputs in sync
+    document.getElementById('graph-from').value = fmtLocal(_graphState.fromMs);
+    document.getElementById('graph-to').value   = fmtLocal(_graphState.toMs);
 
     if (_graphState.view === 'graph') {
       _showGraphState('canvas');
       _renderGraph();
+      _updateLiveBadge();
     }
   } catch (e) {
     console.warn('graph live tick failed:', e);
@@ -1544,6 +1547,15 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+// Format a Date/ms as "YYYY-MM-DDTHH:MM" in LOCAL time — required for
+// datetime-local inputs, which interpret their value as local time, not UTC.
+function fmtLocal(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  const pad = n => String(n).padStart(2, '0');
+  return dt.getFullYear() + '-' + pad(dt.getMonth()+1) + '-' + pad(dt.getDate()) +
+         'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+}
+
 // =============================================================================
 // BOOT — auto-login from session
 // =============================================================================
@@ -1592,9 +1604,8 @@ function setGraphPreset(hours) {
   _graphState.preset = hours;
   const now  = new Date();
   const from = new Date(now - hours * 3600 * 1000);
-  const fmt  = d => d.toISOString().slice(0, 16); // datetime-local format
-  document.getElementById('graph-from').value = fmt(from);
-  document.getElementById('graph-to').value   = fmt(now);
+  document.getElementById('graph-from').value = fmtLocal(from);
+  document.getElementById('graph-to').value   = fmtLocal(now);
   loadGraph();
 }
 
@@ -1603,10 +1614,21 @@ async function loadGraph(resetViewport = true) {
   const toVal   = document.getElementById('graph-to').value;
   if (!fromVal || !toVal) return;
 
+  // datetime-local values have no timezone — parse explicitly as local time.
+  // Appending tz offset string forces correct interpretation in all browsers.
+  const tzOffset = d => {
+    const o = -d.getTimezoneOffset();
+    const s = o >= 0 ? '+' : '-';
+    const pad = n => String(Math.abs(n)).padStart(2,'0');
+    return s + pad(Math.floor(Math.abs(o)/60)) + ':' + pad(Math.abs(o)%60);
+  };
   const fromDate = new Date(fromVal);
   const toDate   = new Date(toVal);
+  // Use Date.now() as the toMs when the input is within 2 min of now,
+  // so viewToMs is exactly now and _graphIsLive() activates correctly.
+  const nowMs = Date.now();
   _graphState.fromMs = fromDate.getTime();
-  _graphState.toMs   = toDate.getTime();
+  _graphState.toMs   = (nowMs - toDate.getTime() < 2 * 60000) ? nowMs : toDate.getTime();
 
   const startStr = fromDate.toISOString().slice(0, 10);
   const endStr   = toDate.toISOString().slice(0, 10);
@@ -1888,9 +1910,8 @@ function _graphZoom(ev, canvas) {
   _graphState.viewToMs   = newTo;
 
   // Update datetime inputs to reflect viewport
-  const fmt = d => new Date(d).toISOString().slice(0,16);
-  document.getElementById('graph-from').value = fmt(newFrom);
-  document.getElementById('graph-to').value   = fmt(newTo);
+  document.getElementById('graph-from').value = fmtLocal(newFrom);
+  document.getElementById('graph-to').value   = fmtLocal(newTo);
 
   _renderGraph();
   _updateLiveBadge();
