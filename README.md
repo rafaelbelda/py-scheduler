@@ -22,8 +22,10 @@ A special thanks to Sonnet 4.6 for most of thi... What? You thought I would code
 
 ## Quickstart
 
+*Releases coming when i'm done testing this
+
 ```bash
-git clone https://github.com/your-username/py-scheduler
+git clone https://github.com/rafaelbelda/py-scheduler
 cd py-scheduler
 
 pip install -r requirements.txt
