@@ -833,19 +833,26 @@ async function pollData() {
 }
 
 async function _graphLiveTick() {
-  // Slide both the fetched range and viewport forward to now,
-  // keeping the same span, then re-fetch.
-  const now     = Date.now();
-  const spanMs  = _graphState.toMs - _graphState.fromMs;
-  const newTo   = now;
-  const newFrom = now - spanMs;
+  const now    = Date.now();
 
-  // Update inputs
+  // Slide the FETCHED range forward to now, keeping its span.
+  const fetchSpan = _graphState.toMs - _graphState.fromMs;
+  const newTo     = now;
+  const newFrom   = now - fetchSpan;
+
+  // Preserve the user's viewport zoom/position — only shift it forward
+  // by how much time has passed since the last tick, not reset it.
+  const viewSpan    = _graphState.viewToMs - _graphState.viewFromMs;
+  const elapsed     = now - _graphState.toMs;  // time since last fetch
+  const newViewFrom = _graphState.viewFromMs + elapsed;
+  const newViewTo   = _graphState.viewToMs   + elapsed;
+
+  // Update inputs to reflect the new fetched range
   const fmt = d => new Date(d).toISOString().slice(0, 16);
   document.getElementById('graph-from').value = fmt(newFrom);
   document.getElementById('graph-to').value   = fmt(newTo);
 
-  // Fetch silently (no loading spinner — would be jarring on live refresh)
+  // Fetch silently — no loading spinner on live refresh
   try {
     const startStr = new Date(newFrom).toISOString().slice(0, 10);
     const endStr   = new Date(newTo).toISOString().slice(0, 10);
@@ -856,10 +863,13 @@ async function _graphLiveTick() {
     });
     _graphState.fromMs    = newFrom;
     _graphState.toMs      = newTo;
-    _graphState.viewFromMs = newFrom;
-    _graphState.viewToMs   = newTo;
     _graphState.entries   = all;
     _graphState.tasks     = state.tasks;
+
+    // Advance viewport by elapsed time — zoom level unchanged
+    _graphState.viewFromMs = newViewFrom;
+    _graphState.viewToMs   = newViewTo;
+
     if (_graphState.view === 'graph') {
       _showGraphState(all.length ? 'canvas' : 'empty');
       if (all.length) _renderGraph();
