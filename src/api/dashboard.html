@@ -135,13 +135,17 @@
   #alerts-banner { margin-bottom: 20px; display: flex; flex-direction: column; gap: 8px; }
   .alert {
     display: flex; align-items: flex-start; gap: 12px;
+    background: rgba(231,76,60,0.08);
     background: color-mix(in srgb, var(--red) 8%, var(--bg2));
+    border: 1px solid rgba(231,76,60,0.25);
     border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
     border-radius: var(--radius); padding: 12px 16px;
     animation: slideIn .25s ease;
   }
   .alert.warn {
+    background: rgba(243,156,18,0.08);
     background: color-mix(in srgb, var(--orange) 8%, var(--bg2));
+    border-color: rgba(243,156,18,0.25);
     border-color: color-mix(in srgb, var(--orange) 25%, transparent);
   }
   .alert-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
@@ -392,8 +396,8 @@
     box-shadow: 0 4px 20px rgba(0,0,0,.4);
     max-width: 300px;
   }
-  .toast.ok   { border-color: color-mix(in srgb, var(--green) 40%, transparent); }
-  .toast.err  { border-color: color-mix(in srgb, var(--red)   40%, transparent); }
+  .toast.ok   { border-color: rgba(46,204,113,0.4); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+  .toast.err  { border-color: rgba(231,76,60,0.4);  border-color: color-mix(in srgb, var(--red)   40%, transparent); }
   @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
   /* ── View toggle ── */
@@ -706,10 +710,10 @@ async function api(path, opts = {}) {
     },
   });
 
-  // Auto-logout on auth failure
+  // Auto-logout on auth failure and throw so callers don't get undefined
   if (res.status === 401 || res.status === 403) {
     logout();
-    return;
+    throw new Error('auth');
   }
 
   if (!res.ok) {
@@ -795,10 +799,7 @@ function startPolling() {
 const LIVE_TAIL_THRESHOLD_MS = 5 * 60 * 1000;
 
 function _graphIsLive() {
-  // Live when viewport's right edge is within threshold of actual now.
-  // This is the only correct check — viewport near now = user sees current data.
-  if (!_graphState.viewToMs) return false;
-  return (Date.now() - _graphState.viewToMs) < LIVE_TAIL_THRESHOLD_MS;
+  return _graphState.livePinned;
 }
 
 function _updateLiveBadge() {
@@ -847,14 +848,19 @@ async function _graphLiveTick() {
       return t >= _graphState.fromMs && t <= newTo;
     });
 
-    // Advance viewport by exactly how much the fetched window grew,
-    // preserving span (zoom level) and relative position exactly.
-    const elapsed      = newTo - _graphState.toMs;
+    const elapsed = newTo - _graphState.toMs;
     _graphState.toMs    = newTo;
-    _graphState.entries = all;
+    _graphState.entries = all.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
     _graphState.tasks   = state.tasks;
-    _graphState.viewFromMs += elapsed;
-    _graphState.viewToMs   += elapsed;
+
+    // Only advance the viewport if user has pinned to live edge.
+    // This preserves zoom position exactly — new dots just appear on right.
+    if (_graphState.livePinned) {
+      const span = _graphState.viewToMs - _graphState.viewFromMs;
+      _graphState.viewToMs   = newTo;
+      _graphState.viewFromMs = newTo - span;
+    }
+    _normalizeViewport();
 
     // Keep inputs in sync
     document.getElementById('graph-from').value = fmtLocal(_graphState.fromMs);
@@ -951,6 +957,13 @@ async function stopScheduler() {
   let attempts = 0;
   const reconnect = setInterval(async () => {
     attempts++;
+    // Always check limit first — catches both success and error paths
+    if (attempts >= 60) {
+      clearInterval(reconnect);
+      document.getElementById('sched-label').textContent = 'unreachable';
+      toast('Service did not restart within 60s', 'err');
+      return;
+    }
     try {
       const s = await api('/status');
       if (s?.scheduler_running) {
@@ -959,11 +972,8 @@ async function stopScheduler() {
         await pollStatus();
         await loadOverview();
       }
-    } catch (_) {}
-    if (attempts >= 60) {
-      clearInterval(reconnect);
-      document.getElementById('sched-label').textContent = 'unreachable';
-      toast('Service did not restart within 60s', 'err');
+    } catch (_) {
+      // Service still down — keep trying until attempts limit
     }
   }, 1000);
 }
@@ -1500,7 +1510,22 @@ async function resetTaskStrikes(key) {
 // MODALS
 // =============================================================================
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+  if (id === 'edit-modal') _clearEditModal();
+}
+function _clearEditModal() {
+  ['ef-name','ef-script','ef-times','ef-days','ef-dom','ef-md','ef-sd','ef-iv'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const timeout = document.getElementById('ef-timeout');
+  if (timeout) timeout.value = 300;
+  const freq = document.getElementById('ef-frequency');
+  if (freq) freq.value = 'daily';
+  // Re-run form visibility so stale conditional rows don't show
+  if (typeof updateEditForm === 'function') updateEditForm();
+}
 
 document.querySelectorAll('.modal-bg').forEach(bg => {
   bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('open'); });
@@ -1571,6 +1596,9 @@ function fmtLocal(d) {
 // GRAPH VIEW — Scatter/dot chart (one row per task, dots = runs)
 // =============================================================================
 
+// AbortController for in-flight graph fetches — cancels stale requests
+let _graphFetchController = null;
+
 const _graphState = {
   view: 'table',      // 'table' | 'graph'
   preset: 12,         // active preset hours
@@ -1581,6 +1609,7 @@ const _graphState = {
   viewFromMs: 0,      // current viewport start (zoom/pan)
   viewToMs: 0,        // current viewport end
   dots: [],           // hit targets for hover
+  livePinned: false,  // true = viewport right edge pinned to now, advances with ticks
 };
 
 function setOverviewView(view, btn) {
@@ -1601,7 +1630,8 @@ function setOverviewView(view, btn) {
 }
 
 function setGraphPreset(hours) {
-  _graphState.preset = hours;
+  _graphState.preset    = hours;
+  _graphState.livePinned = true;  // presets always go to now → pin live
   const now  = new Date();
   const from = new Date(now - hours * 3600 * 1000);
   document.getElementById('graph-from').value = fmtLocal(from);
@@ -1633,14 +1663,19 @@ async function loadGraph(resetViewport = true) {
   const startStr = fromDate.toISOString().slice(0, 10);
   const endStr   = toDate.toISOString().slice(0, 10);
 
+  // Cancel any in-flight fetch
+  if (_graphFetchController) _graphFetchController.abort();
+  _graphFetchController = new AbortController();
+  const _graphSignal = _graphFetchController.signal;
+
   _showGraphState('loading');
   try {
-    const data = await api(`/logs/range/query?start=${startStr}&end=${endStr}`);
+    const data = await api(`/logs/range/query?start=${startStr}&end=${endStr}`, { signal: _graphSignal });
     const all = (data?.entries || []).filter(e => {
       const t = new Date(e.ts).getTime();
       return t >= _graphState.fromMs && t <= _graphState.toMs;
     });
-    _graphState.entries = all;
+    _graphState.entries = all.slice().sort((a, b) => a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0);
     _graphState.tasks   = state.tasks;
 
     // Only reset the viewport on an explicit user action (preset / load btn).
@@ -1649,12 +1684,16 @@ async function loadGraph(resetViewport = true) {
       _graphState.viewFromMs = _graphState.fromMs;
       _graphState.viewToMs   = _graphState.toMs;
     }
+    // Pin live if the right edge is essentially "now" (within 2 min of load time)
+    _graphState.livePinned = (Date.now() - _graphState.toMs) < 2 * 60000;
+    _normalizeViewport();
 
     if (!all.length) { _showGraphState('empty'); _updateLiveBadge(); return; }
     _showGraphState('canvas');
     _renderGraph();
     _updateLiveBadge();
   } catch (e) {
+    if (e?.name === 'AbortError') return; // superseded by newer request — ignore
     _showGraphState('empty');
     console.error('loadGraph:', e);
   }
@@ -1664,6 +1703,33 @@ function _showGraphState(which) {
   document.getElementById('graph-canvas-wrap').style.display = which === 'canvas'  ? '' : 'none';
   document.getElementById('graph-empty').style.display       = which === 'empty'   ? '' : 'none';
   document.getElementById('graph-loading').style.display     = which === 'loading' ? '' : 'none';
+}
+
+// Enforce viewport invariants after every mutation.
+// Guarantees: viewFromMs < viewToMs, span within sane bounds,
+// viewport doesn't stray before fetched data left boundary.
+const _MIN_SPAN_MS = 5 * 60 * 1000;       //  5 minutes minimum
+const _MAX_SPAN_MS = 30 * 24 * 3600 * 1000; // 30 days maximum
+function _normalizeViewport() {
+  const s = _graphState;
+  if (!s.viewFromMs || !s.viewToMs) return;
+
+  // Clamp span
+  let span = s.viewToMs - s.viewFromMs;
+  if (span < _MIN_SPAN_MS) {
+    s.viewFromMs = s.viewToMs - _MIN_SPAN_MS;
+    span = _MIN_SPAN_MS;
+  }
+  if (span > _MAX_SPAN_MS) {
+    s.viewFromMs = s.viewToMs - _MAX_SPAN_MS;
+  }
+
+  // Don't let left edge go before fetched range start
+  if (s.fromMs && s.viewFromMs < s.fromMs) {
+    s.viewFromMs = s.fromMs;
+    // preserve span on right side too
+    s.viewToMs = Math.max(s.viewToMs, s.viewFromMs + span);
+  }
 }
 
 function _renderGraph() {
@@ -1908,6 +1974,10 @@ function _graphZoom(ev, canvas) {
 
   _graphState.viewFromMs = newFrom;
   _graphState.viewToMs   = newTo;
+  _normalizeViewport();
+
+  // Unpin live if user zooms right edge away from now; re-pin if zoomed back
+  _graphState.livePinned = (Date.now() - newTo) < LIVE_TAIL_THRESHOLD_MS;
 
   // Update datetime inputs to reflect viewport
   document.getElementById('graph-from').value = fmtLocal(newFrom);
