@@ -166,6 +166,7 @@
     border-bottom: 1px solid var(--border); background: var(--bg3); font-weight: 500;
   }
   td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td:last-child { white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(124,106,255,.04); }
 
@@ -209,7 +210,7 @@
   .action-btn.danger:hover { border-color: var(--red); color: var(--red); }
   .action-btn.run-btn:hover { border-color: var(--green); color: var(--green); }
 
-  .btn-row { display: flex; gap: 6px; align-items: center; }
+  .btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
 
   /* ── Logs ── */
   .logs-toolbar {
@@ -448,7 +449,10 @@
     <!-- Task status strip -->
     <div class="section-header">
       <div class="section-title">Task Status</div>
-      <button class="action-btn" onclick="loadOverview()">↻ refresh</button>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span id="last-updated" style="font-size:10px;color:var(--muted2)"></span>
+        <button class="action-btn" onclick="loadOverview()">↻ refresh</button>
+      </div>
     </div>
     <div id="task-status-wrap" class="table-wrap" style="margin-bottom:24px">
       <table>
@@ -623,6 +627,7 @@ const state = {
   stats:         {},
   tasks:         {},
   pollTimer:     null,
+  dataTimer:     null,
 };
 
 // =============================================================================
@@ -712,11 +717,25 @@ async function init() {
 
 function startPolling() {
   stopPolling();
+  // Poll header every 15s; also refresh active tab data every 30s
   state.pollTimer = setInterval(pollStatus, 15000);
+  state.dataTimer = setInterval(pollData, 30000);
+}
+
+async function pollData() {
+  // Refresh data for whichever tab is currently visible
+  const active = document.querySelector('.tab-content.active');
+  if (!active) return;
+  const id = active.id;
+  if (id === 'tab-overview') await loadOverview();
+  else if (id === 'tab-tasks') await loadTasks();
+  else if (id === 'tab-strikes') await loadStrikes();
+  // logs tab is query-driven; don't auto-refresh
 }
 
 function stopPolling() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  if (state.dataTimer) { clearInterval(state.dataTimer); state.dataTimer = null; }
 }
 
 // =============================================================================
@@ -733,7 +752,7 @@ function showTab(id, btn) {
 }
 
 // =============================================================================
-// STATUS POLLING
+// STATUS POLLING — header pill + uptime (every 15s)
 // =============================================================================
 async function pollStatus() {
   try {
@@ -877,6 +896,10 @@ async function loadOverview() {
         showAlert('error', `Task '${k}' notifications muted`,
           `${v.strikes} consecutive failures. Check the Strikes tab.`, `mute-${k}`);
     });
+
+    // ── Last updated timestamp ───────────────────────────────────────────────
+    const lu = document.getElementById('last-updated');
+    if (lu) lu.textContent = 'updated ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   } catch (e) { console.error('loadOverview:', e); }
 }
@@ -1067,24 +1090,55 @@ function updateEditForm() {
 async function saveTaskEdit() {
   const key = document.getElementById('edit-task-key').textContent;
   const f   = document.getElementById('ef-frequency').value;
+
+  const timeoutRaw = parseInt(document.getElementById('ef-timeout').value, 10);
+  if (!timeoutRaw || timeoutRaw < 1) { toast('Timeout must be a positive number', 'err'); return; }
+
   const body = {
-    name:              document.getElementById('ef-name').value,
-    script:            document.getElementById('ef-script').value,
+    name:              document.getElementById('ef-name').value.trim(),
+    script:            document.getElementById('ef-script').value.trim(),
     frequency:         f,
-    timeout:           parseInt(document.getElementById('ef-timeout').value),
+    timeout:           timeoutRaw,
     notify_on_success: document.getElementById('ef-nos').value === 'true',
     notify_on_failure: document.getElementById('ef-nof').value === 'true',
   };
-  const timesRaw = document.getElementById('ef-times').value;
-  if (timesRaw) body.times = timesRaw.split(',').map(s => s.trim()).filter(Boolean);
-  if (f === 'weekly')   body.days_of_week  = document.getElementById('ef-days').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-  if (f === 'monthly')  body.day_of_month  = parseInt(document.getElementById('ef-dom').value);
-  if (f === 'yearly')   body.month_day     = document.getElementById('ef-md').value;
-  if (['specific', 'once'].includes(f)) body.specific_date = document.getElementById('ef-sd').value;
+
+  if (!body.name)   { toast('Name cannot be empty', 'err'); return; }
+  if (!body.script) { toast('Script path cannot be empty', 'err'); return; }
+
+  // Frequency-specific fields — only include what's relevant
+  if (f !== 'interval') {
+    const timesRaw = document.getElementById('ef-times').value.trim();
+    if (!timesRaw) { toast('Times cannot be empty for this frequency', 'err'); return; }
+    body.times = timesRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (f === 'weekly') {
+    const daysRaw = document.getElementById('ef-days').value.trim();
+    if (!daysRaw) { toast('Days of week cannot be empty', 'err'); return; }
+    body.days_of_week = daysRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
+  if (f === 'monthly') {
+    const domRaw = parseInt(document.getElementById('ef-dom').value, 10);
+    if (!domRaw || domRaw < 1 || domRaw > 31) { toast('Day of month must be 1–31', 'err'); return; }
+    body.day_of_month = domRaw;
+  }
+  if (f === 'yearly') {
+    const md = document.getElementById('ef-md').value.trim();
+    if (!md) { toast('Month-day cannot be empty', 'err'); return; }
+    body.month_day = md;
+  }
+  if (['specific', 'once'].includes(f)) {
+    const sd = document.getElementById('ef-sd').value.trim();
+    if (!sd) { toast('Specific date cannot be empty', 'err'); return; }
+    body.specific_date = sd;
+  }
   if (f === 'interval') {
-    body.interval_value = parseInt(document.getElementById('ef-iv').value);
+    const ivRaw = parseInt(document.getElementById('ef-iv').value, 10);
+    if (!ivRaw || ivRaw < 1) { toast('Interval value must be a positive number', 'err'); return; }
+    body.interval_value = ivRaw;
     body.interval_unit  = document.getElementById('ef-iu').value;
   }
+
   try {
     await api(`/tasks/${key}`, { method: 'PATCH', body: JSON.stringify(body) });
     toast('Task updated', 'ok');
@@ -1161,12 +1215,11 @@ function renderLogList(entries, container, compact = false) {
   container.innerHTML = header + rows;
 
   // Attach expand handlers after render
-  container.querySelectorAll('.log-entry:not(.log-header)').forEach((row, i) => {
+  container.querySelectorAll('.log-entry:not(.log-header)').forEach((row) => {
     row.addEventListener('click', () => {
       const detail = row.nextElementSibling;
       if (!detail?.classList.contains('log-row-detail')) return;
-      const isOpen = detail.style.display === 'block';
-      detail.style.display = isOpen ? 'none' : 'block';
+      const isOpen = row.classList.contains('expanded');
       row.classList.toggle('expanded', !isOpen);
     });
   });

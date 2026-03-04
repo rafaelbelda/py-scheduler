@@ -30,7 +30,7 @@ Direct send() calls are NOT counted toward the global cap.
 Config (under "ntfy")
 ---------------------
     enabled            bool    master switch (default false)
-    url                str     full ntfy topic URL, e.g. "https://ntfy.sh/my-topic"
+    topic              str     ntfy topic name, e.g. "my-topic" → posts to https://ntfy.sh/my-topic
     token              str     optional Bearer token for auth
     strike_limit       int     failures before muting a task (default 10)
     strike_reset_hours float   hours of silence before auto-reset (default 24)
@@ -212,7 +212,7 @@ def notify_result(result: RunResult) -> None:
 
     Never raises. Silently skips when:
       - result.forced is True
-      - ntfy is disabled or url is empty
+      - ntfy is disabled or topic is empty
       - the task's notify flag is False for this outcome
       - the task is muted
       - the global cap is reached
@@ -229,9 +229,11 @@ def notify_result(result: RunResult) -> None:
     if not cfg.get("enabled", False):
         return
 
-    url = (cfg.get("url") or "").strip()
-    if not url:
+    topic = (cfg.get("topic") or "").strip()
+    if not topic:
+        logger.warning("notifier: ntfy enabled but 'topic' is empty — skipping notify_result")
         return
+    url = "https://ntfy.sh/" + topic
 
     token = cfg.get("token") or ""
 
