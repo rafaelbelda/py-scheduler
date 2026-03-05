@@ -39,6 +39,7 @@ Config (under "ntfy")
 
 from __future__ import annotations
 
+import unicodedata
 import logging
 import threading
 import time
@@ -51,6 +52,20 @@ from .models import RunResult, RunStatus
 
 logger = logging.getLogger(__name__)
 
+def _encode_title(title: str, use_latin1_encoding: bool) -> str:
+    """Return a header-safe title string."""
+
+    # normalize common unicode dashes -- LLMs love that shit man
+    title = title.replace("–", "-").replace("—", "-").replace("−", "-")
+
+    if use_latin1_encoding:
+        try:
+            return title.encode("utf-8").decode("latin-1")
+        except Exception:
+            pass
+
+    clean_title = unicodedata.normalize("NFKD", title)
+    return clean_title.encode("latin-1", "replace").decode("latin-1")
 
 # ---------------------------------------------------------------------------
 # In-memory strike state
@@ -173,10 +188,7 @@ def _send_raw(
         "Content-Type": "text/plain; charset=utf-8",
     }
 
-    if use_latin1_encoding:
-        headers["Title"] = title.encode("utf-8").decode("latin-1")
-    else:
-        headers["Title"] = title
+    headers["Title"] = _encode_title(title, use_latin1_encoding)
 
     if token:
         headers["Authorization"] = f"Bearer {token}"
