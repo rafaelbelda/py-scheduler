@@ -971,7 +971,7 @@ async function stopScheduler() {
       const s = await api('/status');
       if (s?.scheduler_running) {
         clearInterval(reconnect);
-        toast('Scheduler restarted ✓', 'ok');
+        toast('Scheduler restarted', 'ok');
         await pollStatus();
         await loadOverview();
       }
@@ -1086,7 +1086,7 @@ async function loadOverview() {
 
     if (!issues.length) {
       countEl.textContent = '';
-      issuesWrap.innerHTML = '<div class="empty" style="color:var(--green);opacity:.8">✓ no failures in the last 24h</div>';
+      issuesWrap.innerHTML = '<div class="empty" style="color:var(--green);opacity:.8">no failures (last 24h)</div>';
     } else {
       countEl.textContent = `(${issues.length})`;
       renderLogList(issues, issuesWrap, false);
